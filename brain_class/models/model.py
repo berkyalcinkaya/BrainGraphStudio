@@ -1,4 +1,26 @@
-from params import Param
+
+#from BrainGB.models import GAT, GCN, BrainNN, MLP
+#import torch
+from .params import Param
+
+
+
+'''
+def build_model(args, device, model_name, num_features, num_nodes, n_MLP_layers, hidden_dim=None, gat_hidden_dim=None, n_classes = 2):
+    if model_name == 'gcn':
+        model = BrainNN(args,
+                      GCN(num_features, args, num_nodes, num_classes=2),
+                      MLP(2 * num_nodes, hidden_dim, n_MLP_layers, torch.nn.ReLU, n_classes=n_classes),
+                      ).to(device)
+    elif model_name == 'gat':
+        model = BrainNN(args,
+                      GAT(num_features, args, num_nodes, num_classes=2),
+                      MLP(2 * num_nodes, gat_hidden_dim, n_MLP_layers, torch.nn.ReLU, n_classes=n_classes),
+                      ).to(device)
+    else:
+        raise ValueError(f"ERROR: Model variant \"{model_name}\" not found!")
+    return model
+'''
 
 
 class BrainGNN():
@@ -15,6 +37,7 @@ class BrainGNN():
     architecture_params = [Param("n_GNN_layers", 2, int, optimizable=True), 
                            Param("pooling_ratio", 0.5, float, optimizable=True)]
     params = {"data":dataparams, "train":trainparams, "architecture": architecture_params}
+
 
 class BrainGB():
     dataparams = [Param("batchsize", 32, int), Param("train_split", 0.60, float), 

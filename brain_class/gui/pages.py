@@ -4,8 +4,10 @@ from PyQt5.QtWidgets import (QComboBox, QGroupBox, QFormLayout, QGridLayout, QAp
                              QDialogButtonBox, QButtonGroup)
 from scipy.io import loadmat
 from PyQt5 import QtCore, QtGui
-from utils import *
-from model import BrainGB, BrainGNN
+from .utils import is_binary, custom_json_dump
+from brain_class.models.model import BrainGB, BrainGNN
+
+
 
 class FilePage(QWizardPage):
     def __init__(self):
@@ -95,6 +97,18 @@ class FilePage(QWizardPage):
     def addDataAttributesToText(self):
         self.textBox.clear()
         self.textBox.setText(f"num_examples: {len(self.files)}\nshape: {self.shape}\ndtype: {self.dtype}\nis_binary: {self.is_binary}")
+    
+    def get_data(self):
+        data_dict = {
+            "files": self.files,
+            "shape": self.shape,
+            "type": self.dtype,
+            "is_binary": self.is_binary,
+            "augmentation": self.augmentedCheckbox.isChecked(),
+            "aug_factor": self.augmentationFactor.value()
+        }
+
+        return data_dict
 
 
 class ModelPage(QWizardPage):
@@ -117,12 +131,12 @@ class ModelPage(QWizardPage):
         self.layout.addWidget(boldLabel1)
         self.models_bg = QButtonGroup()
         self.models_bg.setExclusive(False)
-        self.use_brain_cnn = QCheckBox("BrainNetCNN")
+        #self.use_brain_cnn = QCheckBox("BrainNetCNN")
         self.use_brain_gnn = QCheckBox("BrainGNN")
-        self.models_bg.addButton(self.use_brain_cnn,1)
+        #self.models_bg.addButton(self.use_brain_cnn,1)
         self.models_bg.addButton(self.use_brain_gnn,2)
         self.models_bg.buttonClicked.connect(self.use_preimpl_model)
-        self.layout.addWidget(self.use_brain_cnn)
+        #self.layout.addWidget(self.use_brain_cnn)
         self.layout.addWidget(self.use_brain_gnn)
 
         self.groupboxes = []
@@ -191,10 +205,10 @@ class ModelPage(QWizardPage):
         self.graph_conv_attention_checkbox.stateChanged.connect(self.update_graph_conv_options)
     
     def use_preimpl_model(self):
-        self.toggle_gbs(self.models_bg.checkedButton()== None)
-        if self.models_bg.checkedId() ==2:
-            self.use_brain_cnn.setChecked(False)
-        elif self.models_bg.checkedId()==1:
+        self.toggle_gbs(self.models_bg.checkedButton() is None)
+        # if self.models_bg.checkedId() ==2:
+        #     self.use_brain_cnn.setChecked(False)
+        if self.models_bg.checkedId()==1:
             self.use_brain_gnn.setChecked(False)
 
     def toggle_gbs(self, b):
@@ -211,10 +225,11 @@ class ModelPage(QWizardPage):
 
     def get_data(self):
         data = {
-            "Node Features": [radio.text() for radio in self.node_features_radios if radio.isChecked()],
+            "use_brain_gnn": self.use_brain_gnn.isChecked(),
+            "node_fatures": [radio.text() for radio in self.node_features_radios if radio.isChecked()],
             "message-passing": [],
             "message-passing with attention": [],
-            "Pooling Strategies": [radio.text() for radio in self.pooling_radios if radio.isChecked()]
+            "pooling": [radio.text() for radio in self.pooling_radios if radio.isChecked()]
         }
     
         if self.graph_conv_attention_checkbox.isChecked():
@@ -234,85 +249,137 @@ class HyperParamDialog(QWizardPage):
         self.setTitle("Select Hyperparameters")
         self.setSubTitle("Choose hyperparameters, or define parameter search spaces")
 
-        self.bold_font=QtGui.QFont()
+        self.caption = '''Define hyperparameter searchspace in json using <a href="https://nni.readthedocs.io/en/stable/hpo/search_space.html">NNI specs</a>:
+        <br>A parameter is optimizable if it has an entry in the json. Delete the parameter's <br> entry to remove it as a search space dimension. 
+        <br> Ensure search space type is compatible with chosen optimization algorithm'''
+        
+        self.bold_font = QtGui.QFont()
         self.bold_font.setBold(True)
 
         self.setWindowTitle("Select Parameters")
         self.make_layout()
 
+        # Store the original size of the window
+        self.original_size = self.size()
+
     def make_layout(self):
         self.layout = QGridLayout()
         self.setLayout(self.layout)
-   
+
+        # Create the caption label for search space with HTML formatting
+        self.caption_label = QLabel(self.caption)
+        self.caption_label.setTextFormat(QtCore.Qt.RichText)  # Set text format to RichText for HTML support
+        self.caption_label.setTextInteractionFlags(QtCore.Qt.TextBrowserInteraction)
+        self.caption_label.setOpenExternalLinks(True)
+        self.caption_label.setVisible(False)
+
+        # Create the QTextEdit for search space but keep it hidden initially
+        self.search_space_text = QTextEdit()
+        self.search_space_text.setVisible(False)
+
+        # Add the caption label and QTextEdit to the layout
+        self.layout.addWidget(self.caption_label, 0, 2, 3,1)
+        self.layout.addWidget(self.search_space_text, 3, 2, 20, 1)
+
     def initializePage(self):
         for i in reversed(range(self.layout.count())): 
-            self.layout.itemAt(i).widget().setParent(None)
+            widget = self.layout.itemAt(i).widget()
+            if widget is not None and widget not in [self.search_space_text, self.caption_label]:
+                widget.setParent(None)
 
-        modelType = self.wizard().page(1).use_brain_gnn.isChecked() or self.wizard().page(1).use_brain_cnn.isChecked()
+        # Example model selection logic
+        modelType = self.wizard().page(1).use_brain_gnn.isChecked() #or self.wizard().page(1).use_brain_cnn.isChecked()
         if modelType:
-            model = BrainGNN
+            model = BrainGNN  # Replace with your actual model class
         else:
-            model = BrainGB
-        
+            model = BrainGB  # Replace with your actual model class
+
         self.params = []
-        
         self.row = -1
+        self.main_column_span = 2  # Main widgets span two columns
+
+        self.data = {}
         for key, value in model.params.items():
-            self.row+=1
-            self.layout.addWidget(self.make_bold_label(key),self.row,0,1,2)
+            subdata = {}
+            self.data[key] = subdata
+            self.row += 1
+            self.layout.addWidget(self.make_bold_label(key), self.row, 0, 1, self.main_column_span)
             for param in value:
-                print(param.name)
+                subdata[param.name] = param
                 self.params.append(param)
-                self.row+=1
+                self.row += 1
                 widget = param.get_widget()
                 if type(widget) is tuple:
                     label, widget = widget
-                    self.layout.addWidget(label,self.row,0,1,2)
-                    self.layout.addWidget(widget, self.row, 2,1,2)
+                    self.layout.addWidget(label, self.row, 0)
+                    self.layout.addWidget(widget, self.row, 1)
                 else:
-                    self.layout.addWidget(widget, self.row, 0,1,2)
+                    self.layout.addWidget(widget, self.row, 0, 1, self.main_column_span)
+
         self.configure_nni_dropdown()
 
     def configure_nni_dropdown(self):
+        nni_params = {"search_space":self.search_space_text.text}
+        self.data["nni"] = nni_params
+        
+        self.row += 1
+        self.layout.addWidget(self.make_bold_label("hyperparameter search"), self.row, 0)
         self.row+=1
+
         self.nni_dropdown = QComboBox()
         self.nni_dropdown.addItems(["None", "Random", "GridSearch", "TPE", "Evolution", "Anneal", "Evolution", 
                                     "Hyperband", "SMAC", "Batch", "Hyperband", "Metis", "BOHB", "GP", "PBT", "DNGO"])
-        self.layout.addWidget(QLabel("Hyperparameter Optimization Algorithm"), self.row,0,1,2)
-        self.layout.addWidget(self.nni_dropdown, self.row, 2,1,2)
+        self.nni_dropdown.setToolTip("Choose a hyperparameter optimization algorithm to enable intelligent hyperparameter search. See NNI documentation for details on each algorithm.")
+        nni_params["optimization_algorithm"] = self.nni_dropdown.currentText
+        self.layout.addWidget(QLabel("optimization"), self.row, 0, 1, self.main_column_span)
+        self.layout.addWidget(self.nni_dropdown, self.row, 1)
         self.nni_dropdown.currentIndexChanged.connect(self.nni_dropdown_change)
-        self.row+=1
+        self.row += 1
+
+        self.assesor_dropdown = QComboBox()
+        self.assesor_dropdown.addItems(["None", "Medianstop", "Curvefitting"])
+        self.assesor_dropdown.setToolTip("Assessors dictate early stopping protocols. See NNI documentation for more details")
+        self.layout.addWidget(QLabel("assessors"), self.row, 0,1,self.main_column_span)
+        self.layout.addWidget(self.assesor_dropdown, self.row, 1)
+        nni_params["assessor_algorithm"] = self.assesor_dropdown.currentText
+        self.row += 1
 
         self.num_trials_spin = QSpinBox()
         self.num_trials_spin.setValue(10)
         self.num_trials_spin.setMaximum(1000)
-        self.num_trials_spin.setEnabled(False)
-        self.layout.addWidget(QLabel("max trails"), self.row, 0,1,2)
-        self.layout.addWidget(self.num_trials_spin, self.row,2,1,2)
-        self.row+=1
+        self.layout.addWidget(QLabel("max trials"), self.row, 0)
+        self.layout.addWidget(self.num_trials_spin, self.row, 1)
+        nni_params["n_trials"] = self.num_trials_spin.value
+        self.row += 1
 
         self.max_time_edit = QLineEdit()
         self.max_time_edit.setText("24hr")
-        self.max_time_edit.setEnabled(False)
-        self.layout.addWidget(QLabel("max time"), self.row, 0,1,2)
-        self.layout.addWidget(self.max_time_edit, self.row,2,1,2)
-        self.row+=1
-    
+        self.layout.addWidget(QLabel("max time"), self.row, 0)
+        self.layout.addWidget(self.max_time_edit, self.row, 1)
+        nni_params["max_time"] = self.max_time_edit.value
+        self.row += 1
+
     def nni_dropdown_change(self):
-        if self.nni_dropdown.currentText != None:
-            self.add_text_edit()
+        selected = self.nni_dropdown.currentText()
+        if selected and selected != "None":
             self.make_search_space_json()
+            self.caption_label.setVisible(True)
+            self.search_space_text.setVisible(True)
             self.num_trials_spin.setEnabled(True)
             self.max_time_edit.setEnabled(True)
+
+            # Increase window width by 150%
+            self.wizard().resize(int(self.original_size.width() * 1.5), self.original_size.height())
         else:
-            self.layout.removeWidget(self.search_space_text)
+            self.search_space_text.clear()
+            self.search_space_text.setVisible(False)
+            self.caption_label.setVisible(False)
             self.num_trials_spin.setEnabled(False)
             self.max_time_edit.setEnabled(False)
 
-    def add_text_edit(self):
-        self.search_space_text = QTextEdit()
-        self.layout.addWidget(self.search_space_text, self.row, 0, 8,4)
-    
+            # Reset window to original size
+            self.wizard().resize(self.original_size)
+
     def make_search_space_json(self):
         self.search_space = {}
         for param in self.params:
@@ -321,14 +388,55 @@ class HyperParamDialog(QWizardPage):
         self.search_space_text.clear()
         self.search_space_text.setText(custom_json_dump(self.search_space))
 
-
     def add_param_to_search_space(self, param):
         name = param.name
         search_type = param.default_search_type
-        space  = param.default_search_space
+        space = param.default_search_space
         self.search_space[name] = {"_type": search_type, "_value": space}
-    
+
     def make_bold_label(self, text):
         label = QLabel(text)
         label.setFont(self.bold_font)
         return label
+    
+    def cleanupPage(self):
+        # Hide the search space QTextEdit and caption label
+        self.search_space_text.setVisible(False)
+        self.caption_label.setVisible(False)
+
+        # Reset the dropdown to "None" or to its default state
+        self.nni_dropdown.setCurrentIndex(self.nni_dropdown.findText("None"))
+
+        # Disable and reset other widgets as needed
+        self.num_trials_spin.setEnabled(False)
+        self.max_time_edit.setEnabled(False)
+
+        # Reset window to original size
+        self.wizard().resize(self.original_size)
+
+        # Call the base class cleanup
+        super().cleanupPage()
+    
+    def extract_nni_data(self):
+        nni_out_data = {}
+        for key, value in self.data["nni"]:
+            if key == "search_space":
+                selected = self.nni_dropdown.currentText()
+                if selected and selected != "None":
+                    val = value()
+                else:
+                    val = ""
+            else:
+                val = value()
+            nni_out_data[key] = val
+        return nni_out_data
+
+
+
+    
+    def get_data(self):
+        out_data = {}
+        out_data["nni"] = self.extract_nni_data()
+        for key in self.data:
+            if key != "nni"
+            sub_dict = 

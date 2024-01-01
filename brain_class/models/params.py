@@ -27,22 +27,31 @@ class Param():
     
     def get_widget(self):
         if self.type_ is bool:
-            return QCheckBox(self.name)
+            self.widget = QCheckBox(self.name)
         if self.options:
-            return self.make_label(), self.make_combo_box()
+            self.widget = self.make_combo_box()
+            return self.make_label(), self.widget
         if self.type_ is float:
-            return self.make_label(), self.make_spin_box(QDoubleSpinBox())
+            self.widget = self.make_spin_box(QDoubleSpinBox())
+            return self.make_label(), self.widget
         if self.type_ is int:
-            return self.make_label(), self.make_spin_box(QSpinBox())
+            self.widget =  self.make_spin_box(QSpinBox())
+            return self.make_label(), self.widget
         if self.type_ is str:
-            return self.make_label(), self.make_line_edit()
+            self.widget = self.make_line_edit()
+            return self.make_label(), self.widget
+    
+    def get_value(self):
+        return getattr(self.widget, self.data_method)()
     
     def make_line_edit(self):
+        self.data_method = "text"
         line_edit = QLineEdit()
         line_edit.setText(self.value)
         return line_edit
     
     def make_spin_box(self, spin_box):
+        self.data_method = "value"
         spin_box.setMaximum(1000)
         if isinstance(spin_box, QDoubleSpinBox):
             spin_box.setDecimals(5)
@@ -50,6 +59,7 @@ class Param():
         return spin_box
     
     def make_combo_box(self):
+        self.data_method = "currentText"
         combo = QComboBox()
         combo.addItems(self.options)
         combo.setCurrentIndex(self.options.index(self.value))
