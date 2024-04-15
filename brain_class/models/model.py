@@ -1,11 +1,8 @@
-
-#from BrainGB.models import GAT, GCN, BrainNN, MLP
-#import torch
+from BrainGB.models import GAT, GCN, BrainNN, MLP
+import torch
 from .params import Param
 
 
-
-'''
 def build_model(args, device, model_name, num_features, num_nodes, n_MLP_layers, hidden_dim=None, gat_hidden_dim=None, n_classes = 2):
     if model_name == 'gcn':
         model = BrainNN(args,
@@ -20,7 +17,6 @@ def build_model(args, device, model_name, num_features, num_nodes, n_MLP_layers,
     else:
         raise ValueError(f"ERROR: Model variant \"{model_name}\" not found!")
     return model
-'''
 
 
 class BrainGNN():

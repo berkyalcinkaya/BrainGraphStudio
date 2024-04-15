@@ -1,10 +1,15 @@
-from PyQt5.QtWidgets import (QComboBox, QGroupBox, QFormLayout, QGridLayout, QApplication, QWizard, 
+import os
+from PyQt5.QtWidgets import (QSizePolicy, QComboBox, QGroupBox, QFormLayout, QGridLayout, QApplication, QWizard, 
                              QWizardPage, QVBoxLayout, QPushButton, QFileDialog, QCheckBox, QSpinBox, 
                              QTextEdit, QRadioButton, QLabel, QLineEdit, QGroupBox, QRadioButton, 
                              QDialogButtonBox, QButtonGroup)
+import numpy as np
 from scipy.io import loadmat
 from PyQt5 import QtCore, QtGui
-from .utils import is_binary, custom_json_dump
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from .utils import (is_binary, custom_json_dump, is_flist, is_mat, 
+                    is_mat_flist, is_npy, is_npy_flist, load_npy_flist, process_label_file)
 from brain_class.models.model import BrainGB, BrainGNN
 
 
@@ -12,21 +17,29 @@ from brain_class.models.model import BrainGB, BrainGNN
 class FilePage(QWizardPage):
     def __init__(self):
         super().__init__()
-        self.setTitle("Select an flist file")
-        self.setSubTitle("Choose a textfile containing a list of .mat or .npy binary or weighted matrices")
+        self.setTitle("Load and Configure Training Data")
         self.setLayout(QGridLayout())
 
-        self.openFileButton = QPushButton("Open Flist File")
+        self.openFileButton = QPushButton("Open File")
         self.openFileButton.setEnabled(True)
         self.layout().addWidget(self.openFileButton, 0,0,1,4)
-        self.augmentedCheckbox = QCheckBox("Aug Data      |")
-        self.layout().addWidget(self.augmentedCheckbox, 1,0,1,2)
+        self.openFileButton.clicked.connect(self.openDataFileDialog)
 
-        spinBoxLabel = QLabel("Aug Factor")
-        self.augmentationFactor = QSpinBox()
-        self.augmentationFactor.setDisabled(True)
-        self.layout().addWidget(spinBoxLabel,1,2,1,1)
-        self.layout().addWidget(self.augmentationFactor, 1,3,1,1)
+        self.labelButton = QPushButton("Open Label CSV")
+        self.labelButton.setToolTip("Select a CSV File containing the labels for the training data")
+        self.labelButton.setEnabled(True)
+        self.labelButton.clicked.connect(self.openLabelFileDialog)
+        self.layout().addWidget(self.labelButton, 1,0,1,4)
+
+        # self.augmentedCheckbox = QCheckBox("Aug Data      |")
+        # self.layout().addWidget(self.augmentedCheckbox, 2,0,1,2)
+
+        # spinBoxLabel = QLabel("Aug Factor")
+        # self.augmentationFactor = QSpinBox()
+        # self.augmentationFactor.setDisabled(True)
+        # self.layout().addWidget(spinBoxLabel,2,2,1,1)
+        # self.layout().addWidget(self.augmentationFactor, 2,3,1,1)
+        # self.augmentedCheckbox.toggled.connect(self.augmentationFactor.setEnabled)
 
         chooseLabel = QLabel("Choose variable key")
         self.labelChoose = QComboBox()
@@ -37,39 +50,157 @@ class FilePage(QWizardPage):
 
         spinBoxLabel = QLabel("Threshold percentile")
         self.thresholdLevel = QSpinBox()
+        self.thresholdLevel.setMaximum(100)
+        self.thresholdLevel.setMinimum(0)
+        self.thresholdLevel.setToolTip("Edge weights below this percentile will be discarded")
         self.thresholdLevel.setEnabled(False)
         self.layout().addWidget(spinBoxLabel, 3,0,1,2)
         self.layout().addWidget(self.thresholdLevel, 3,2,1,1)
 
         self.textBox = QLabel()
+        font = QtGui.QFont()
+        font.setBold(True)
+        self.textBox.setFont(font)
         self.layout().addWidget(self.textBox,4,0,1,4)
 
-        self.openFileButton.clicked.connect(self.openFileDialog)
-        self.augmentedCheckbox.toggled.connect(self.augmentationFactor.setEnabled)
+        self.figure = Figure()
+        self.canvas = FigureCanvas(self.figure)
+        self.layout().addWidget(self.canvas, 5, 0, 6, 4)
+        self.canvas.setVisible(False)
+        sizePolicy = QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        #sizePolicy.setRetainSizeWhenHidden(True)
+        self.canvas.setSizePolicy(sizePolicy)
 
         self.extensions = ["mat", "npy"]
 
-    def openFileDialog(self):
+        self.data = []
+        self.labels = []
+        self.num_examples = 0
+        self.num_labels = 0
+        self.num_classes = 0
+        self.shape = ()
+        self.dtype = None
+        self.is_binary = False
+        self.dataLoaded = False
+        self.labelsLoaded = False
+        self.overrideComplete = True
+        self.validInputs = True
+        self.is_mat = False
+        self.mat_var_chosen = False
+
+    def openDataFileDialog(self):
         options = QFileDialog.Options()
-        filePath, _ = QFileDialog.getOpenFileName(self, "Open Text File", "", "Text Files (*.txt);; Flist files (*.flist)", options=options)
+        filePath, _ = QFileDialog.getOpenFileName(self, "Open Text, Npy, or Mat File", "", "Text Files (*.txt);; Flist files (*.flist);; Mat file (*.mat);; Npy files (*.npy)", options=options)
         if filePath:
             self.filepath = filePath
-            self.getFlistAttributes()
-            self.textBox.clear()
-            self.textBox.setText(f"{self.filepath}\nnum_examples: {len(self.files)}")
-            self.labelChoose.setEnabled(True)
-        else:
-            self.labelChoose.setEnabled(False)
-            self.textBox.clear()
-        
-    def getFlistAttributes(self):
-        with open(self.filepath, "r") as f:
-            self.files = [file.strip() for file in f.readlines()]
-        self.extension = self.files[0].split(".")[-1]
-        self.matKeys = loadmat(self.files[0]).keys()
-        self.labelChoose.clear()
-        self.labelChoose.addItems(self.matKeys)
+            self.overrideComplete = False
 
+            if is_mat_flist(self.filepath) or is_mat(self.filepath):
+                self.is_mat = True
+                
+                if is_mat_flist(self.filepath):
+                    with open(self.filepath, "r") as f:
+                        self.files = [file.strip() for file in f.readlines()]
+                    self.allowMatVarChoose(loadmat(self.files[0]).keys())           
+                self.dataLoaded = True
+                self.resetTextBox()
+
+            elif is_npy(self.filepath) or is_npy_flist(self.filepath):
+                if is_npy(self.filepath):
+                    self.data = np.load(filePath)
+                elif is_npy_flist(self.filepath):
+                    self.data = load_npy_flist(self.filepath)
+                self.getDataAttributes()
+                self.checkBinary()
+                self.dataLoaded = True
+                self.labelChoose.setEnabled(False)
+                self.resetTextBox()
+            else:
+                self.setTextBox("Cannot Read Data\nEnsure Files are in the correct format.")
+        self.completeChanged.emit()
+    
+    def setTextBox(self, text):
+        self.textBox.clear()
+        self.textBox.setText(text)
+    
+    def addToTextBox(self, text):
+        curr_text = self.textBox.text()
+        curr_text+= text
+        self.textBox.setText(curr_text)
+    
+    def openLabelFileDialog(self):
+        filePath, _ = QFileDialog.getOpenFileName(self, "Open CSV or Text File Containing Training Data Labels", "", "Csv files (*.csv);; Text Files (*.txt)")
+        if filePath:
+            self.overrideComplete = False
+            is_valid, data = process_label_file(filePath)
+            
+            if is_valid:
+                self.labels = np.array(data)
+                self.labelsLoaded = True
+                self.getLabelAttributes()
+                self.resetTextBox()
+                self.drawLabelHistogram()
+            else:
+                self.dataLoaded = False
+                self.labels = []
+        else:
+            if not self.dataLoaded:
+                self.overrideComplete = True
+            else:
+                self.overrideComplete = False
+        self.completeChanged.emit()
+    
+    def drawLabelHistogram(self):
+        if self.labels is not None and len(self.labels) > 0:
+            self.canvas.setVisible(True)
+            self.figure.clear()
+            ax = self.figure.add_subplot(111)
+            ax.hist(self.labels, edgecolor='black')
+            unique_labels = np.unique(self.labels)
+            ax.set_xticks(unique_labels)
+            ax.set_xlabel('Label')
+            ax.set_ylabel('Frequency')
+            ax.set_title('Label Distribution')
+            self.figure.tight_layout()
+            self.canvas.draw()
+        else:
+            self.canvas.setVisible(False)
+
+    def isComplete(self):
+        print(self.dataLoaded, self.labelsLoaded, self.validInputs)
+        return (self.overrideComplete or 
+            (self.dataLoaded and self.labelsLoaded and self.validInputs))
+
+    def getLabelAttributes(self):
+        labels = self.labels
+        self.num_classes = len(np.unique(labels))
+        self.num_labels = len(labels)
+        if self.dataLoaded:
+            self.checkValidInput()
+
+    def getDataAttributes(self):
+        data = self.data
+        self.num_examples = len(data)
+        self.shape = data.shape
+        self.is_binary = is_binary(data)
+        self.dtype = data.dtype
+        if self.labelsLoaded:
+            self.checkValidInput()
+            
+    def checkBinary(self):
+        if not self.is_binary:
+            self.thresholdLevel.setEnabled(True)
+            self.thresholdLevel.setValue(100)
+        else:
+            self.thresholdLevel.setEnabled(False)
+
+    def allowMatVarChoose(self, matKeys):
+        self.labelChoose.setEnabled(True)
+        self.labelChoose.clear()
+        self.labelChoose.addItems(matKeys)
+        self.labelChoose.setCurrentIndex(-1)
+
+    
     def augmentationCheckBoxClicked(self):
         if self.augmentedCheckbox.isChecked():
             self.augmentationFactor.setEnabled(True)
@@ -79,33 +210,81 @@ class FilePage(QWizardPage):
             self.augmentationFactor.setValue(True)
 
     def labelChooseChange(self):
-        key = self.labelChoose.currentText()
-        sample = loadmat(self.files[0])[key]
-        try:
-            self.shape = sample.shape
-        except:
+        if self.labelChoose.currentIndex() == -1:
+            self.mat_var_chosen = False
             return
-        self.dtype = sample.dtype
-        self.is_binary = is_binary(sample)
-        if self.is_binary:
-            self.thresholdLevel.setEnabled(True)
-            self.thresholdLevel.setValue(10)
-        else:
-            self.thresholdLevel.setEnabled(False)
-        self.addDataAttributesToText()
+        self.mat_var_chosen = True
+        key = self.labelChoose.currentText()
+        self.data = self.getMatData(key)
+        self.getDataAttributes()
+        self.checkBinary()
+        self.resetTextBox()
     
-    def addDataAttributesToText(self):
+    def getMatData(self, key):
+        return np.array([loadmat(file)[key] for file in self.files])
+
+    def resetTextBox(self, custom_data_text=None, custom_label_text=None):
         self.textBox.clear()
-        self.textBox.setText(f"num_examples: {len(self.files)}\nshape: {self.shape}\ndtype: {self.dtype}\nis_binary: {self.is_binary}")
+
+        if self.labelsLoaded:
+            if custom_label_text is not None:
+                self.setTextBox(custom_label_text)
+            else:
+                self.addLabelAttributesToText()
+        if self.dataLoaded:
+            if self.labelsLoaded:
+                self.addToTextBox("\n\n")
+            
+            if custom_data_text is not None:
+                self.addToTextBox(custom_data_text)
+            else:
+                self.addDataAttributesToText()
+        
+        if self.dataLoaded and self.labelsLoaded:
+            self.checkValidInput()
+
+    def addDataAttributesToText(self):
+        if not self.dataLoaded:
+            return
+        if self.is_mat and not self.mat_var_chosen:
+            self.addToTextBox(f'''{self.filepath}\nnum_examples: {len(self.files)}\n\nSelect the Mat file variable to continue''')
+        else:
+            text = (f"num_examples: {self.num_examples}\nshape: {self.shape}\ndtype: {self.dtype}\nis_binary: {self.is_binary}")
+            if self.is_binary:
+                text+= "\n\nWeighted Networks are Recommended"
+            self.addToTextBox(text)
+        
+    def getLabelAttributeAsText(self):
+        return f"num_labels: {self.num_labels}\nnum_classes: {self.num_classes}"
+
+    def addLabelAttributesToText(self):
+        if not self.labelsLoaded:
+            return
+        label_text = self.getLabelAttributeAsText()
+        text = self.textBox.text()
+        text = text + "\n" + label_text
+        self.textBox.setText(text)
     
+    def checkValidInput(self, add_text = True):
+        if self.num_examples!= self.num_labels:
+            self.addToTextBox("\n\nERROR: Number of labels and examples do not match")
+        if self.num_examples<10:
+            self.addToTextBox("\n\n ERROR: Less than 10 examples present")
+        self.validInputs = self.num_examples == self.num_labels and self.num_labels>=10
+        if self.is_mat and not self.mat_var_chosen:
+            self.validInputs = False
+        self.completeChanged.emit()
+
     def get_data(self):
         data_dict = {
-            "files": self.files,
+            "data": self.data,
+            "labels": self.labels,
             "shape": self.shape,
             "type": self.dtype,
             "is_binary": self.is_binary,
             "augmentation": self.augmentedCheckbox.isChecked(),
-            "aug_factor": self.augmentationFactor.value()
+            "aug_factor": self.augmentationFactor.value(),
+            "thresholdd": self.thresholdLevel.value()
         }
 
         return data_dict
@@ -171,7 +350,8 @@ class ModelPage(QWizardPage):
         self.setLayout(self.layout)
 
         # Node Features
-        self.node_features_options = ["identity", "eigen", "degree", "degree profile", "connection profile"]
+        self.node_features_options = ['identity', 'degree', 'degree_bin', 'LDP', 'node2vec', 'adj', 'diff_matrix',
+                                 'eigenvector', 'eigen_norm']
         self.node_features_radios = []
         for option in self.node_features_options:
             radio = QRadioButton(option)
@@ -261,6 +441,7 @@ class HyperParamDialog(QWizardPage):
 
         # Store the original size of the window
         self.original_size = self.size()
+        self.param_data = {}
 
     def make_layout(self):
         self.layout = QGridLayout()
@@ -298,10 +479,9 @@ class HyperParamDialog(QWizardPage):
         self.row = -1
         self.main_column_span = 2  # Main widgets span two columns
 
-        self.data = {}
         for key, value in model.params.items():
             subdata = {}
-            self.data[key] = subdata
+            self.param_data[key] = subdata
             self.row += 1
             self.layout.addWidget(self.make_bold_label(key), self.row, 0, 1, self.main_column_span)
             for param in value:
@@ -315,12 +495,11 @@ class HyperParamDialog(QWizardPage):
                     self.layout.addWidget(widget, self.row, 1)
                 else:
                     self.layout.addWidget(widget, self.row, 0, 1, self.main_column_span)
-
         self.configure_nni_dropdown()
 
     def configure_nni_dropdown(self):
-        nni_params = {"search_space":self.search_space_text.text}
-        self.data["nni"] = nni_params
+        nni_params = {"search_space":self.search_space_text.toPlainText}
+        self.param_data["nni"] = nni_params
         
         self.row += 1
         self.layout.addWidget(self.make_bold_label("hyperparameter search"), self.row, 0)
@@ -356,7 +535,7 @@ class HyperParamDialog(QWizardPage):
         self.max_time_edit.setText("24hr")
         self.layout.addWidget(QLabel("max time"), self.row, 0)
         self.layout.addWidget(self.max_time_edit, self.row, 1)
-        nni_params["max_time"] = self.max_time_edit.value
+        nni_params["max_time"] = self.max_time_edit.text
         self.row += 1
 
     def nni_dropdown_change(self):
@@ -419,7 +598,7 @@ class HyperParamDialog(QWizardPage):
     
     def extract_nni_data(self):
         nni_out_data = {}
-        for key, value in self.data["nni"]:
+        for key, value in self.param_data["nni"].items():
             if key == "search_space":
                 selected = self.nni_dropdown.currentText()
                 if selected and selected != "None":
@@ -431,12 +610,11 @@ class HyperParamDialog(QWizardPage):
             nni_out_data[key] = val
         return nni_out_data
 
-
-
-    
     def get_data(self):
         out_data = {}
         out_data["nni"] = self.extract_nni_data()
-        for key in self.data:
-            if key != "nni"
-            sub_dict = 
+        for key,value in self.param_data.items():
+            if key != "nni":
+                sub_dict = {key2:val2.get_value() for key2,val2 in value.items()}
+                out_data[key] = sub_dict
+        return out_data
