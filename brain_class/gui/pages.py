@@ -20,16 +20,28 @@ class FilePage(QWizardPage):
         self.setTitle("Load and Configure Training Data")
         self.setLayout(QGridLayout())
 
+        self.projectNameLabel = QLabel("Project Name")
+        self.projectName = QLineEdit()
+        self.projectName.setEnabled(True)
+        self.layout().addWidget(self.projectNameLabel, 0,0,1,2)
+        self.layout().addWidget(self.projectName, 0,2,1,2)
+
         self.openFileButton = QPushButton("Open File")
         self.openFileButton.setEnabled(True)
-        self.layout().addWidget(self.openFileButton, 0,0,1,4)
+        self.layout().addWidget(self.openFileButton, 1,0,1,4)
         self.openFileButton.clicked.connect(self.openDataFileDialog)
 
         self.labelButton = QPushButton("Open Label CSV")
         self.labelButton.setToolTip("Select a CSV File containing the labels for the training data")
         self.labelButton.setEnabled(True)
         self.labelButton.clicked.connect(self.openLabelFileDialog)
-        self.layout().addWidget(self.labelButton, 1,0,1,4)
+        self.layout().addWidget(self.labelButton, 2,0,1,4)
+
+        self.openDirButton = QPushButton("Choose Project Directory")
+        self.openDirButton.setToolTip("Choose a directory where all data/model info will be written. If none, defaults to directory of training data")
+        self.openDirButton.setEnabled(True)
+        self.layout().addWidget(self.openDirButton, 3,0,1,4)
+        self.openDirButton.clicked.connect(self.openDirDialog)
 
         # self.augmentedCheckbox = QCheckBox("Aug Data      |")
         # self.layout().addWidget(self.augmentedCheckbox, 2,0,1,2)
@@ -45,8 +57,8 @@ class FilePage(QWizardPage):
         self.labelChoose = QComboBox()
         self.labelChoose.setEnabled(False)
         self.labelChoose.currentIndexChanged.connect(self.labelChooseChange)
-        self.layout().addWidget(chooseLabel, 2,0,1,2)
-        self.layout().addWidget(self.labelChoose,2,2,1,2)
+        self.layout().addWidget(chooseLabel, 4,0,1,2)
+        self.layout().addWidget(self.labelChoose,4,2,1,2)
 
         spinBoxLabel = QLabel("Threshold percentile")
         self.thresholdLevel = QSpinBox()
@@ -54,18 +66,18 @@ class FilePage(QWizardPage):
         self.thresholdLevel.setMinimum(0)
         self.thresholdLevel.setToolTip("Edge weights below this percentile will be discarded")
         self.thresholdLevel.setEnabled(False)
-        self.layout().addWidget(spinBoxLabel, 3,0,1,2)
-        self.layout().addWidget(self.thresholdLevel, 3,2,1,1)
+        self.layout().addWidget(spinBoxLabel, 5,0,1,2)
+        self.layout().addWidget(self.thresholdLevel, 5,2,1,1)
 
         self.textBox = QLabel()
         font = QtGui.QFont()
         font.setBold(True)
         self.textBox.setFont(font)
-        self.layout().addWidget(self.textBox,4,0,1,4)
+        self.layout().addWidget(self.textBox,6,0,1,4)
 
         self.figure = Figure()
         self.canvas = FigureCanvas(self.figure)
-        self.layout().addWidget(self.canvas, 5, 0, 6, 4)
+        self.layout().addWidget(self.canvas, 7, 0, 6, 4)
         self.canvas.setVisible(False)
         sizePolicy = QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         #sizePolicy.setRetainSizeWhenHidden(True)
@@ -87,12 +99,21 @@ class FilePage(QWizardPage):
         self.validInputs = True
         self.is_mat = False
         self.mat_var_chosen = False
+        self.selected_directory = None
+        self.filepath = None
+        self.data_dir = None
+    
+    def openDirDialog(self):
+        directory = QFileDialog.getExistingDirectory(self, "Select Directory For Project Files")
+        if directory:  # If a directory was selected
+            self.selected_directory = directory
 
     def openDataFileDialog(self):
         options = QFileDialog.Options()
         filePath, _ = QFileDialog.getOpenFileName(self, "Open Text, Npy, or Mat File", "", "Text Files (*.txt);; Flist files (*.flist);; Mat file (*.mat);; Npy files (*.npy)", options=options)
         if filePath:
             self.filepath = filePath
+            self.data_dir = os.path.dirname(self.filepath)
             self.overrideComplete = False
 
             if is_mat_flist(self.filepath) or is_mat(self.filepath):
@@ -276,14 +297,21 @@ class FilePage(QWizardPage):
         self.completeChanged.emit()
 
     def get_data(self):
+        if self.selected_directory is not None:
+            project_dir = self.selected_directory
+        else:
+            project_dir = self.data_dir
+        
         data_dict = {
+            "project_name": self.projectNameLabel.text(),
+            "project_dir": project_dir,
             "data": self.data,
             "labels": self.labels,
             "shape": self.shape,
             "type": self.dtype,
             "is_binary": self.is_binary,
-            "augmentation": self.augmentedCheckbox.isChecked(),
-            "aug_factor": self.augmentationFactor.value(),
+            # "augmentation": self.augmentedCheckbox.isChecked(),
+            # "aug_factor": self.augmentationFactor.value(),
             "thresholdd": self.thresholdLevel.value()
         }
 
@@ -420,7 +448,6 @@ class ModelPage(QWizardPage):
         data[mp_key] = [radio.text() for radio in self.graph_conv_radios if radio.isChecked()]
 
         return data
-
 
 class HyperParamDialog(QWizardPage):
     def __init__(self):

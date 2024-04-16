@@ -2,9 +2,12 @@ import sys
 from PyQt5.QtWidgets import QApplication, QWizard
 from PyQt5.QtGui import QPixmap
 from brain_class.gui.pages import FilePage, ModelPage, HyperParamDialog
-from brain_class.data import apply_transforms, convert_raw_to_datas, density_threshold
-from brain_class.models.model import build_model
-import numpy as np
+import os
+import logging
+from skimage.io import imsave
+from brain_class.utils import write_dict_to_json
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s', stream = sys.stdout)
 
 
 class CustomWizard(QWizard):
@@ -37,19 +40,38 @@ class CustomWizard(QWizard):
     
     def get_param_data(self):
         return self.hyperParamDialogPage.get_data()
+
+
+def write_file_data_to_disk(path, file_data):
+    x = file_data["data"]
+    y = file_data["labels"]
+    x_path = os.path.join(path,"x.npy")
+    y_path = os.path.join(path,"y.npy")
     
-def data_parser(file_args, model_args):
-    x,y = file_args["data"],file_args["labels"]
-    thresh = file_args["threshold"] 
+    imsave(x_path, x)
+    imsave(y_path, y)
+    logging.info(f"training data saved to {x_path}")
+    logging.info(f"training labels to saved to {y_path}")
+
+    del file_data["data"]
+    del file_data["labels"]
+
+    file_data_path = os.path.join(path, "data.json")
+
+    write_dict_to_json(file_data, file_data_path)
+    logging.info(f"file data saved to {file_data_path}")
+
     
-    if thresh == 0:
-        x = np.zeros_like(x)
-    elif thresh < 100:
-        x = density_threshold(x,thresh)
-    
-    data_list = convert_raw_to_datas(x, y)
-    data_array = np.array(apply_transforms(data_list, model_args["node_features"]))
-    return data_array
+def make_project_dir(project_dir, project_name):
+    new_path = os.path.join(project_dir, project_name)
+    if os.path.exists(new_path):
+        old_path = new_path
+        new_path = new_path+"-2"
+        logging.warning(f"{old_path} already exists")
+    else:
+        os.mkdir(new_path) 
+    logging.info("{new_path} initialized as project directory")
+    return new_path
 
 
 def main():
@@ -61,8 +83,22 @@ def main():
         model_data = wizard.get_model_data()
         param_data = wizard.get_param_data()
 
+        print(param_data)
+
+        project_path = make_project_dir(file_data["project_dir"], file_data["project_name"])
+
+        write_file_data_to_disk(project_path, file_data)
+        write_dict_to_json(model_data, os.path.join(project_path, "model.json"))
+        write_dict_to_json(param_data)
         
-        data = data_parser(file_data, model_data)
+
+
+
+        # print(file_data)
+        # print(model_data)
+        print(param_data)
+
+        #data = data_parser(file_data, model_data)
 
     
 
