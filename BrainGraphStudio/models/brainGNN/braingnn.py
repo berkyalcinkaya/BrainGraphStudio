@@ -7,7 +7,7 @@ from torch_geometric.utils import (add_self_loops, sort_edge_index,
                                    remove_self_loops)
 from torch_sparse import spspmm
 
-from brainGNN.braingraphconv import MyNNConv
+from BrainGraphStudio.models.brainGNN.braingraphconv import MyNNConv
 
 
 ##########################################################################################################################

@@ -10,8 +10,8 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from .utils import (is_binary, custom_json_dump, is_flist, is_mat, 
                     is_mat_flist, is_npy, is_npy_flist, load_npy_flist, process_label_file)
-from brain_class.models.model import BrainGB, BrainGNN
-
+from BrainGraphStudio.models.model import BrainGB, BrainGNN
+import sys
 
 
 class FilePage(QWizardPage):
@@ -22,11 +22,12 @@ class FilePage(QWizardPage):
 
         self.projectNameLabel = QLabel("Project Name")
         self.projectName = QLineEdit()
+        self.projectName.setText("test")
         self.projectName.setEnabled(True)
         self.layout().addWidget(self.projectNameLabel, 0,0,1,2)
         self.layout().addWidget(self.projectName, 0,2,1,2)
 
-        self.openFileButton = QPushButton("Open File")
+        self.openFileButton = QPushButton("Select Train Data")
         self.openFileButton.setEnabled(True)
         self.layout().addWidget(self.openFileButton, 1,0,1,4)
         self.openFileButton.clicked.connect(self.openDataFileDialog)
@@ -37,7 +38,7 @@ class FilePage(QWizardPage):
         self.labelButton.clicked.connect(self.openLabelFileDialog)
         self.layout().addWidget(self.labelButton, 2,0,1,4)
 
-        self.openDirButton = QPushButton("Choose Project Directory")
+        self.openDirButton = QPushButton("Choose Project Location")
         self.openDirButton.setToolTip("Choose a directory where all data/model info will be written. If none, defaults to directory of training data")
         self.openDirButton.setEnabled(True)
         self.layout().addWidget(self.openDirButton, 3,0,1,4)
@@ -69,15 +70,21 @@ class FilePage(QWizardPage):
         self.layout().addWidget(spinBoxLabel, 5,0,1,2)
         self.layout().addWidget(self.thresholdLevel, 5,2,1,1)
 
+        pythonPathLabel = QLabel("Python Path:")
+        self.pythonPathEdit = QLineEdit()
+        self.pythonPathEdit.setText(sys.executable)
+        self.layout().addWidget(pythonPathLabel, 6,0,1,2)
+        self.layout().addWidget(self.pythonPathEdit,7,0,1,6)
+
         self.textBox = QLabel()
         font = QtGui.QFont()
         font.setBold(True)
         self.textBox.setFont(font)
-        self.layout().addWidget(self.textBox,6,0,1,4)
+        self.layout().addWidget(self.textBox,8,0,1,4)
 
         self.figure = Figure()
         self.canvas = FigureCanvas(self.figure)
-        self.layout().addWidget(self.canvas, 7, 0, 6, 4)
+        self.layout().addWidget(self.canvas, 9, 0, 6, 4)
         self.canvas.setVisible(False)
         sizePolicy = QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         #sizePolicy.setRetainSizeWhenHidden(True)
@@ -188,7 +195,6 @@ class FilePage(QWizardPage):
             self.canvas.setVisible(False)
 
     def isComplete(self):
-        print(self.dataLoaded, self.labelsLoaded, self.validInputs)
         return (self.overrideComplete or 
             (self.dataLoaded and self.labelsLoaded and self.validInputs))
 
@@ -203,6 +209,7 @@ class FilePage(QWizardPage):
         data = self.data
         self.num_examples = len(data)
         self.shape = data.shape
+        self.num_features = self.shape[-1]
         self.is_binary = is_binary(data)
         self.dtype = data.dtype
         if self.labelsLoaded:
@@ -305,14 +312,17 @@ class FilePage(QWizardPage):
         data_dict = {
             "project_name": self.projectNameLabel.text(),
             "project_dir": project_dir,
+            "num_classes": self.num_classes,
+            "num_features": self.num_features,
             "data": self.data,
             "labels": self.labels,
             "shape": self.shape,
-            "type": self.dtype,
+            "type": str(self.dtype),
             "is_binary": self.is_binary,
             # "augmentation": self.augmentedCheckbox.isChecked(),
             # "aug_factor": self.augmentationFactor.value(),
-            "thresholdd": self.thresholdLevel.value()
+            "thresholdd": self.thresholdLevel.value(),
+            "python_path": self.pythonPathEdit.text()
         }
 
         return data_dict
@@ -388,8 +398,8 @@ class ModelPage(QWizardPage):
         self.node_features_radios[0].setChecked(True)
 
         # Graph Convolution Layer Type
-        self.graph_conv_options_mp = ["edge weighted", "bin concat", "edge weight concat", "node edge concat", "node concat"]
-        self.graph_conv_options_ma = ["attention weighted", "edge weighted attention", "attention edge sum", "node edge concat with attention", "node concat w attention"]
+        self.graph_conv_options_mp = ["weighted_sum", "bin_concate", "edge_weight_concate", "node_edge_concate", "node_concate"]
+        self.graph_conv_options_ma = ["attention_weighted", "attention_edge_weighted", "sum_attention_edge", "edge_node_concate", "node_concate"]
         self.graph_conv_radios = []
 
         self.graph_conv_layout.addWidget(self.graph_conv_attention_checkbox)
@@ -401,7 +411,7 @@ class ModelPage(QWizardPage):
         self.graph_conv_radios[0].setChecked(True)
 
         # Pooling Strategies
-        self.pooling_options = ["mean pooling", "sum pooling", "concat pooling", "diffpool"]
+        self.pooling_options = ["mean", "sum", "concat"]
         self.pooling_radios = []
         for option in self.pooling_options:
             radio = QRadioButton(option)
@@ -533,7 +543,7 @@ class HyperParamDialog(QWizardPage):
         self.row+=1
 
         self.nni_dropdown = QComboBox()
-        self.nni_dropdown.addItems(["None", "Random", "GridSearch", "TPE", "Evolution", "Anneal", "Evolution", 
+        self.nni_dropdown.addItems(["None", "random", "GridSearch", "TPE", "Evolution", "Anneal", "Evolution", 
                                     "Hyperband", "SMAC", "Batch", "Hyperband", "Metis", "BOHB", "GP", "PBT", "DNGO"])
         self.nni_dropdown.setToolTip("Choose a hyperparameter optimization algorithm to enable intelligent hyperparameter search. See NNI documentation for details on each algorithm.")
         nni_params["optimization_algorithm"] = self.nni_dropdown.currentText

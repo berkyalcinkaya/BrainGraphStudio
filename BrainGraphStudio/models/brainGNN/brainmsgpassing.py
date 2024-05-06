@@ -3,7 +3,7 @@ import inspect
 
 import torch
 # from torch_geometric.utils import scatter_
-from torch_scatter import scatter,scatter_add
+from torch_scatter import scatter_add
 
 special_args = [
     'edge_index', 'edge_index_i', 'edge_index_j', 'size', 'size_i', 'size_j'

@@ -1,12 +1,12 @@
 import torch
 import torch.nn.functional as F
 from torch.nn import Parameter
-from brainGNN.brainmsgpassing import MyMessagePassing
+from BrainGraphStudio.models.brainGNN.brainmsgpassing import MyMessagePassing
 from torch_geometric.utils import add_remaining_self_loops,softmax
 
 from torch_geometric.typing import (OptTensor)
 
-from brainGNN.inits import uniform
+from BrainGraphStudio.models.brainGNN.inits import uniform
 
 
 class MyNNConv(MyMessagePassing):

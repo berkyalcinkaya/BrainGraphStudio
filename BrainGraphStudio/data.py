@@ -5,6 +5,7 @@ from torch import tensor, from_numpy
 import numpy as np
 from scipy.sparse import coo_matrix
 from BrainGB.dataset.transforms import *
+from BrainGB.dataset.brain_data import BrainData
 import random
 import tqdm
 
@@ -95,7 +96,7 @@ def convert_raw_to_datas(X, Y):
         subnet = X[i]
         edge_weights, coo_format = adjacency_matrix_to_coo(subnet)
         y_i = tensor(np.array([Y[i]])).to(torch.int64)
-        datas.append(Data(x=from_numpy(subnet).to(torch.float32), edge_index=from_numpy(coo_format).to(torch.int64), 
+        datas.append(BrainData(x=from_numpy(subnet).to(torch.float32), edge_index=from_numpy(coo_format).to(torch.int64), 
                     edge_attr = from_numpy(edge_weights).unsqueeze(1).to(torch.float32), y=y_i,
-                    pos = from_numpy(np.identity(subnet.shape[-1])).to(torch.float32)))
+                    pos = from_numpy(np.identity(subnet.shape[-1])).to(torch.float32)), num_nodes = subnet.shape[0] )
     return datas
