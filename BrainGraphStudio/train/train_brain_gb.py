@@ -11,6 +11,8 @@ from typing import Optional
 from torch.utils.data import DataLoader
 import logging
 import time
+import json
+import os
 logger = logging.getLogger(__name__)
 
 
@@ -99,42 +101,44 @@ def main_training_loop(path):
     if args.use_nni:
         args.add_nni_args(nni.get_next_parameter())
 
-    dataset, test = train_test_split(args.data, args.y)
-    test_loader = DataLoader(test, batch_size=args.test_batch_size, shuffle=False)
-
+    dataset, y = args.data_train_val, args.y_train_val
     accs, aucs, macros = [], [], []
     skf = StratifiedKFold(n_splits=args.k_fold_splits, shuffle=True)
-    for train_index, test_index in skf.split(dataset, y):
+    for train_index, val_index in skf.split(dataset, y):
         model = build_model(args, device, args.model_name, args.num_features, args.num_nodes,
                             args.n_MLP_layers, args.hidden_dim, args.num_classes)
         optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-        train_set, test_set = dataset[train_index], dataset[test_index]
+        train_set, val_set = dataset[train_index], dataset[val_index]
 
         train_loader = DataLoader(train_set, batch_size=args.train_batch_size, shuffle=False)
-        val_loader = DataLoader(test_set, batch_size=args.test_batch_size, shuffle=False)
+        val_loader = DataLoader(val_set, batch_size=args.test_batch_size, shuffle=False)
 
         # train
-        test_micro, test_auc, test_macro = train_and_evaluate(model, train_loader, val_loader,
+        val_micro, val_auc, val_macro = train_and_evaluate(model, train_loader, val_loader,
                                                                 optimizer, device, args)
 
-        test_micro, test_auc, test_macro = evaluate(model, device, val_loader)
-        logging.info(f'(Initial Performance Last Epoch) | test_micro={(test_micro * 100):.2f}, '
-                        f'test_macro={(test_macro * 100):.2f}, test_auc={(test_auc * 100):.2f}')
+        val_micro, val_auc, val_macro = evaluate(model, device, val_loader)
+        logging.info(f'(Initial Performance Last Epoch) | test_micro={(val_micro * 100):.2f}, '
+                        f'test_macro={(val_macro * 100):.2f}, test_auc={(val_auc * 100):.2f}')
 
-        accs.append(test_micro)
-        aucs.append(test_auc)
-        macros.append(test_macro)
+        accs.append(val_micro)
+        aucs.append(val_auc)
+        macros.append(val_macro)
 
     result_str = f'(K Fold Final Result)| avg_acc={(np.mean(accs) * 100):.2f} +- {(np.std(accs) * 100): .2f}, ' \
                  f'avg_auc={(np.mean(aucs) * 100):.2f} +- {np.std(aucs) * 100:.2f}, ' \
                  f'avg_macro={(np.mean(macros) * 100):.2f} +- {np.std(macros) * 100:.2f}\n'
     logging.info(result_str)
 
+    current_metric = np.mean(aucs)
+
     if args.enable_nni:
-        nni.report_final_result(np.mean(aucs))
+        nni.report_final_result(current_metric)
     
     if nni.get_best_result() is None or current_metric > nni.get_best_result():
-        torch.save(model.state_dict(), 'best_model.pth') 
+        torch.save(model.state_dict(), os.path.join(args.path, 'best_model.pth')) 
+        with open(os.path.join(args.path, "best_hyperparams.json"), "w") as hp_file:
+            json.dump(args.nni_params, hp_file)
 
 
 

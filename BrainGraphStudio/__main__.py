@@ -7,6 +7,7 @@ import logging
 from BrainGraphStudio.utils import write_dict_to_json
 import numpy as np
 from BrainGraphStudio.nni import configure_nni
+from sklearn.model_selection import train_test_split
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s', stream = sys.stdout)
 
@@ -42,16 +43,26 @@ class CustomWizard(QWizard):
         return self.hyperParamDialogPage.get_data()
 
 
-def write_file_data_to_disk(path, file_data):
+def write_file_data_to_disk(path, file_data, test_split, seed):
     x = file_data["data"]
     y = file_data["labels"]
-    x_path = os.path.join(path,"x.npy")
-    y_path = os.path.join(path,"y.npy")
+    x_train, x_test, y_train, y_test = train_test_split(x,y,test_size = test_split, random_state = seed)
+
+
+    x_train_path = os.path.join(path,"x_train.npy")
+    y_train_path = os.path.join(path,"y_trainn.npy")
+    x_test_path = os.path.join(path,"x_test.npy")
+    y_test_path = os.path.join(path,"y_train.npy")
     
-    np.save(x_path, x)
-    np.save(y_path, y)
-    logging.info(f"training data saved to {x_path}")
-    logging.info(f"training labels to saved to {y_path}")
+    np.save(x_train_path, x_train)
+    np.save(y_train_path, y_train)
+    logging.info(f"training data saved to {x_train_path}")
+    logging.info(f"training labels to saved to {y_train_path}")
+
+    np.save(x_test_path, x_test)
+    np.save(y_test_path, y_test)
+    logging.info(f"training data saved to {x_test_path}")
+    logging.info(f"training labels to saved to {y_test_path}")
 
     del file_data["data"]
     del file_data["labels"]
@@ -81,13 +92,16 @@ def main():
         model_data = wizard.get_model_data()
         param_data = wizard.get_param_data()
 
+        if param_data["random_seed"] == -1:
+            param_data["random_seed"] = None
+ 
         python_path = file_data["python_path"]
         if not os.path.exists(python_path):
             python_path = sys.executable
         
         project_path = make_project_dir(file_data["project_dir"], file_data["project_name"])
 
-        write_file_data_to_disk(project_path, file_data)
+        write_file_data_to_disk(project_path, file_data, param_data["test_split"])
         write_dict_to_json(model_data, os.path.join(project_path, "model.json"))
         write_dict_to_json(param_data)
 

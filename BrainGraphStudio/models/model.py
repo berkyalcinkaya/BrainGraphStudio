@@ -24,7 +24,8 @@ def build_model(args, device, model_name, num_features, num_nodes, n_MLP_layers,
 
 class BrainGNN():
     dataparams = [Param("batchsize", 32, int), Param("train_split", 0.60, float), 
-                  Param("validation_split", 0.2, float), Param("test_split", 0.2, float)]
+                  Param("validation_split", 0.2, float), Param("test_split", 0.2, float),
+                  Param("random_seed", value = -1, description = "Random Seed for All Random Operations. -1 to Disable")]
     trainparams = [Param("lr", 0.01, float, optimizable=True, default_search_space=[0.001, 0.0005, 1]),
                 Param("epochs", 100, int, optimizable=True, default_search_space=[50,80,100]), 
                 Param("k_fold_splits", 0, int),
@@ -45,7 +46,8 @@ class BrainGNN():
 
 class BrainGB():
     dataparams = [Param("batchsize", 32, int), Param("train_split", 0.60, float), 
-                  Param("validation_split", 0.2, float), Param("test_split", 0.2, float)]
+                  Param("validation_split", 0.2, float), Param("test_split", 0.2, float),
+                  Param("random_seed", value = -1, description = "Random Seed for All Random Operations. -1 to Disable")]
     trainparams = [Param("lr", 0.01, float, optimizable=True, default_search_space=[0.1, 0.01, 0.001, 0.0001]), 
                    Param("epochs", 100, int, optimizable=True, default_search_space=[50,80,100]),
                    Param("weightdecay", 1e-4, float, optimizable=True, default_search_space= [1e-5, 1e-4, 1e-3]),
