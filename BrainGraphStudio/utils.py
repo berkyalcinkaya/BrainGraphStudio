@@ -1,4 +1,39 @@
 import json
+import os
+from itertools import compress
+
+MAIN_PATH = os.path.abspath(__file__)
+BGS_DIR = os.path.dirname(MAIN_PATH)
+
+class MaskableList(list):
+    def __init__(self, iterable=[]):
+        super(MaskableList, self).__init__(iterable)
+    
+    def __getitem__(self, index):
+        # Try to return a single item or a slice using the parent class' method
+        try:
+            return super(MaskableList, self).__getitem__(index)
+        except TypeError:
+            # Handle the case where index is an iterable
+            if all(isinstance(i, bool) for i in index):
+                # Treat as a boolean mask
+                return MaskableList(compress(self, index))
+            else:
+                # Treat as a list of indices
+                return MaskableList([self[i] for i in index])
+
+# Example usage
+data = [10, 20, 30, 40, 50]
+ml = MaskableList(data)
+
+# Using a boolean mask
+mask = [True, False, True, False, True]
+print(ml[mask])  # Output: MaskableList([10, 30, 50])
+
+# Using a list of indices
+indices = [0, 2, 4]
+print(ml[indices])  # Output: MaskableList([10, 30, 50])
+
 
 def write_dict_to_json(data, file_path):
     with open(file_path, 'w') as json_file:

@@ -1,9 +1,8 @@
-from BrainGraphStudio.utils import convert_numeric_values
+from BrainGraphStudio.utils import convert_numeric_values, BGS_DIR
 from nni.experiment import Experiment
 from os.path import join
 import json
 import logging
-import os 
 logger = logging.getLogger(__name__)
 
 
@@ -15,7 +14,7 @@ def configure_nni(nni_args, experiment_path, python_path, brainGNN = False):
 
     experiment = Experiment("local")
 
-    experiment.config.trial_code_directory = join(os.getcwd(),"BrainGraphStudio/train")
+    experiment.config.trial_code_directory = join(BGS_DIR, "train")
     logger.info(f"Trial code directory set to {experiment.config.trial_code_directory}")
     experiment.config.search_space = search_space
     experiment.config.tuner.name = nni_args["optimization_algorithm"]
@@ -37,6 +36,7 @@ def configure_nni(nni_args, experiment_path, python_path, brainGNN = False):
         command = f"{python_path} train_brain_gnn.py"
     else:
         command = f"{python_path} train_brain_gb.py"
+    command += f" {experiment_path}"
     logger.info(f"NNI being run with trial command {command}")
     experiment.config.trial_command = command
 

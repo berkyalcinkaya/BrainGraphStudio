@@ -227,8 +227,10 @@ class FilePage(QWizardPage):
     def allowMatVarChoose(self, matKeys):
         self.labelChoose.setEnabled(True)
         self.labelChoose.clear()
+        self.labelChoose.blockSignals(True)
         self.labelChoose.addItems(matKeys)
         self.labelChoose.setCurrentIndex(-1)
+        self.labelChoose.blockSignals(False)
 
     
     def augmentationCheckBoxClicked(self):
@@ -323,7 +325,7 @@ class FilePage(QWizardPage):
             "is_binary": bool(self.is_binary),
             # "augmentation": self.augmentedCheckbox.isChecked(),
             # "aug_factor": self.augmentationFactor.value(),
-            "thresholdd": self.thresholdLevel.value(),
+            "threshold": self.thresholdLevel.value(),
             "python_path": self.pythonPathEdit.text()
         }
 
@@ -435,7 +437,6 @@ class ModelPage(QWizardPage):
         for groupbox in self.groupboxes:
                 groupbox.setEnabled(b)
         
-
     def update_graph_conv_options(self):
         use_attention = self.graph_conv_attention_checkbox.isChecked()
         options_to_use = self.graph_conv_options_ma if use_attention else self.graph_conv_options_mp
@@ -446,18 +447,18 @@ class ModelPage(QWizardPage):
     def get_data(self):
         data = {
             "use_brain_gnn": bool(self.use_brain_gnn.isChecked()),
-            "node_fatures": [radio.text() for radio in self.node_features_radios if radio.isChecked()],
-            "message-passing": [],
-            "message-passing with attention": [],
-            "pooling": [radio.text() for radio in self.pooling_radios if radio.isChecked()]
+            "node_features": str([radio.text() for radio in self.node_features_radios if radio.isChecked()][0]),
+            "message_passing": "",
+            "message_passing_w_attn": "",
+            "pooling": str([radio.text() for radio in self.pooling_radios if radio.isChecked()][0])
         }
     
         if self.graph_conv_attention_checkbox.isChecked():
-            mp_key = "message-passing with attention"
+            mp_key = "message_passing_w_attn"
         else:
-            mp_key = "message-passing"
+            mp_key = "message_passing"
 
-        data[mp_key] = [radio.text() for radio in self.graph_conv_radios if radio.isChecked()]
+        data[mp_key] = str([radio.text() for radio in self.graph_conv_radios if radio.isChecked()][0])
 
         return data
 

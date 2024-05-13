@@ -1,0 +1,3 @@
+[submodule "BrainGraphStudio/BrainGB"]
+	path = BrainGraphStudio/BrainGB
+	url = https://github.com/HennyJie/BrainGB.git

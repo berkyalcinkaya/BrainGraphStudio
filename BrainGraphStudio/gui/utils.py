@@ -52,7 +52,10 @@ def process_label_file(file_path):
     return True, data[0]
 
 def is_binary(a):
-    return ((a==0) | (a==1)).all()
+    a = np.asarray(a)
+    if a.size == 0:
+        return False  # Handle empty array case
+    return ((a == 0) | (a == 1)).all()
 
 def custom_json_dump(obj, indent=2):
     if isinstance(obj, dict):

@@ -16,6 +16,8 @@ from BrainGraphStudio.train.train_utils import seed_everything, get_device
 from BrainGraphStudio.models.model import build_model
 from BrainGraphStudio.models.brainGNN.loss import topk_loss, consist_loss
 import json
+
+from BrainGraphStudio.utils import MaskableList
 logger = logging.getLogger(__name__)
 
 
@@ -175,13 +177,15 @@ def train(epoch, scheduler, optimizer, train_loader, model, device, args, writer
 
 def main_training_loop(path):
     args = ParamArgs(path)
-    seed_everything(args.seed)
+    if args.random_seed:
+        seed_everything(args.random_seed)
+        logger.info(f"Seeding All Random Processes with seed: {args.random_seed}")
     device = get_device()
 
     if args.use_nni:
         args.add_nni_args(nni.get_next_parameter())
     
-    dataset, y = args.data_train_val, args.y_train_val
+    dataset, y = MaskableList(args.data_train_val), MaskableList(args.y_train_val)
     accs, aucs, macros = [], [], []
     skf = StratifiedKFold(n_splits=args.k_fold_splits, shuffle=True)
     for fold_idx, (train_index, val_index) in enumerate(skf.split(dataset, y)):

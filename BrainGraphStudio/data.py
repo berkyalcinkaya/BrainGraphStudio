@@ -4,10 +4,13 @@ from torch_geometric.data import InMemoryDataset, Data
 from torch import tensor, from_numpy
 import numpy as np
 from scipy.sparse import coo_matrix
-from BrainGB.dataset.transforms import *
-from BrainGB.dataset.brain_data import BrainData
+from BrainGraphStudio.BrainGB.src.dataset.transforms import *
+from BrainGraphStudio.BrainGB.src.dataset.brain_data import BrainData
 import random
 import tqdm
+import logging
+
+logger = logging.getLogger(__name__)
 
 def is2D(np_array):
     return len(np_array.shape)==2
@@ -91,12 +94,16 @@ def adjacency_matrix_to_coo(adjacency_matrix):
     return coo.data, np.array([coo.row, coo.col], dtype = np.uint8)
 
 def convert_raw_to_datas(X, Y):
+    logger.info(str(X.shape))
+    logger.info(str(Y.shape))
     datas = []
     for i in range(X.shape[0]):
         subnet = X[i]
         edge_weights, coo_format = adjacency_matrix_to_coo(subnet)
         y_i = tensor(np.array([Y[i]])).to(torch.int64)
-        datas.append(BrainData(x=from_numpy(subnet).to(torch.float32), edge_index=from_numpy(coo_format).to(torch.int64), 
+        datas.append(Data(x=from_numpy(subnet).to(torch.float32), edge_index=from_numpy(coo_format).to(torch.int64), 
                     edge_attr = from_numpy(edge_weights).unsqueeze(1).to(torch.float32), y=y_i,
-                    pos = from_numpy(np.identity(subnet.shape[-1])).to(torch.float32)), num_nodes = subnet.shape[0] )
+                    pos = from_numpy(np.identity(subnet.shape[-1])).to(torch.float32)))
+        datas[-1].num_nodes = subnet.shape[0]
+        
     return datas

@@ -6,6 +6,8 @@ import logging
 from sklearn.model_selection import train_test_split
 logger = logging.getLogger(__name__)
 
+TRAIN_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
 def seed_everything(seed):
     logging.info(f"seed for seed_everything(): {seed}")
     random.seed(seed)

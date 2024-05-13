@@ -1,4 +1,6 @@
-from enum import unique
+from BrainGraphStudio.utils import BGS_DIR
+from BrainGraphStudio.train.train_utils import TRAIN_SCRIPT_DIR
+import subprocess
 import sys
 from PyQt5.QtWidgets import QApplication, QWizard
 from PyQt5.QtGui import QPixmap
@@ -10,6 +12,8 @@ from BrainGraphStudio.utils import write_dict_to_json
 import numpy as np
 from BrainGraphStudio.nni import configure_nni
 from sklearn.model_selection import train_test_split
+
+sys.path.append(os.path.dirname(TRAIN_SCRIPT_DIR))
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s', stream = sys.stdout)
 
@@ -48,13 +52,13 @@ class CustomWizard(QWizard):
 def write_file_data_to_disk(path, file_data, test_split, seed):
     x = file_data["data"]
     y = file_data["labels"]
-    x_train, x_test, y_train, y_test = train_test_split(x,y,test_size = test_split, random_state = seed)
+    x_train, x_test, y_train, y_test = train_test_split(x,y,test_size = test_split, random_state = seed, stratify = y)
 
 
     x_train_path = os.path.join(path,"x_train.npy")
     y_train_path = os.path.join(path,"y_train.npy")
     x_test_path = os.path.join(path,"x_test.npy")
-    y_test_path = os.path.join(path,"y_train.npy")
+    y_test_path = os.path.join(path,"y_test.npy")
     
     np.save(x_train_path, x_train)
     np.save(y_train_path, y_train)
@@ -120,17 +124,24 @@ def main():
             param_data["nni"]["search_space"] = json.loads(param_data["nni"]["search_space"])
         write_dict_to_json(param_data, os.path.join(project_path, "params.json"))
 
+        use_brain_gnn = model_data["use_brain_gnn"]
+
         if use_nni:
             logging.info("Utilizing An NNI Experiment to Train Models with Hyperparameter Optimization")
-            experiment = configure_nni(param_data["nni"], project_path, python_path)
+            experiment = configure_nni(param_data["nni"], project_path, python_path, brainGNN=use_brain_gnn )
             experiment.run(8080)
             # some sort of model testing here
         else:
+            run_dir = os.path.join(BGS_DIR, "train")
+            if use_brain_gnn:
+                train_file = "BrainGraphStudio.train.train_brain_gnn"
+            else:
+                train_file = "BrainGraphStudio.train.train_brain_gb"
+            
+            #train_file = os.path.join(run_dir, train_file)
             logging.info("No Hyperparameter Optimization In Use")
-            #sys.run()
-
-        
-    sys.exit() 
+            logging.info(f"Running {python_path} {train_file} {project_path}")
+            subprocess.run([python_path, "-m", train_file, project_path])
 
 if __name__ == "__main__":
     main()

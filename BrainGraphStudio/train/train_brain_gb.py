@@ -1,21 +1,21 @@
 from BrainGraphStudio.train.input_utils import ParamArgs
 from BrainGraphStudio.train.train_utils import seed_everything, get_device
 from BrainGraphStudio.models.model import build_model
+from BrainGraphStudio.utils import MaskableList
 import numpy as np
 import nni
 import torch
 import torch.nn.functional as F
 from sklearn import metrics
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedKFold, train_test_split
 from typing import Optional
-from torch.utils.data import DataLoader
+from torch_geometric.loader import DataLoader
 import logging
-import time
 import json
 import os
+import sys
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s', stream = sys.stdout)
 logger = logging.getLogger(__name__)
-
-
 
 def train_and_evaluate(model, train_loader, test_loader, optimizer, device, args):
     model.train()
@@ -57,7 +57,7 @@ def train_and_evaluate(model, train_loader, test_loader, optimizer, device, args
                    f'test_macro={(test_macro * 100):.2f}, test_auc={(test_auc * 100):.2f}\n'
             logging.info(text)
 
-        if args.enable_nni:
+        if args.use_nni:
             nni.report_intermediate_result(train_auc)
 
     accs, aucs, macros = np.sort(np.array(accs)), np.sort(np.array(aucs)), np.sort(np.array(macros))
@@ -79,12 +79,16 @@ def evaluate(model, device, loader, test_loader: Optional[DataLoader] = None) ->
         preds_prob += torch.exp(c)[:, 1].detach().cpu().tolist()
         trues += data.y.detach().cpu().tolist()
 
-    train_auc = metrics.roc_auc_score(trues, preds_prob)
+    try:
+        train_auc = metrics.roc_auc_score(trues, preds_prob)
+    except ValueError:
+        logger.warning("Only one class present in y_true. ROC AUC score is not defined in that case.")
+        train_auc = 0
 
     if np.isnan(auc):
         train_auc = 0.5
     train_micro = metrics.f1_score(trues, preds, average='micro')
-    train_macro = metrics.f1_score(trues, preds, average='macro', labels=[0, 1])
+    train_macro = metrics.f1_score(trues, preds, average='macro')
 
     if test_loader is not None:
         test_micro, test_auc, test_macro = evaluate(model, device, test_loader)
@@ -94,24 +98,38 @@ def evaluate(model, device, loader, test_loader: Optional[DataLoader] = None) ->
 
 
 def main_training_loop(path):
+    best = None
     args = ParamArgs(path)
-    seed_everything(args.seed)
+    logger.info("LOADED PARAM ARGS")
+    if args.random_seed:
+        seed_everything(args.random_seed)
+        logger.info(f"Seeding All Random Processes with seed: {args.random_seed}")
     device = get_device()
 
     if args.use_nni:
         args.add_nni_args(nni.get_next_parameter())
 
-    dataset, y = args.data_train_val, args.y_train_val
+    dataset, y = MaskableList(args.data_train_val), MaskableList(args.y_train_val)
     accs, aucs, macros = [], [], []
-    skf = StratifiedKFold(n_splits=args.k_fold_splits, shuffle=True)
-    for train_index, val_index in skf.split(dataset, y):
+
+    if args.k_fold_splits < 2:
+        logger.info("k fold splits < 2. No StratifiedKFolds in use")
+        train_index, val_index = train_test_split(range(len(dataset)), test_size=0.2, stratify=y)
+        # Proceed with the training using train_index and val_index as if they were from a single split
+        indices = [(train_index, val_index)]
+    else:
+        skf = StratifiedKFold(n_splits=args.k_fold_splits, shuffle=True)
+        indices = skf.split(dataset, y)
+
+
+    for train_index, val_index in indices:
         model = build_model(args, device, args.model_name, args.num_features, args.num_nodes,
                             args.n_MLP_layers, args.hidden_dim, args.num_classes)
         optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
         train_set, val_set = dataset[train_index], dataset[val_index]
 
-        train_loader = DataLoader(train_set, batch_size=args.train_batch_size, shuffle=False)
-        val_loader = DataLoader(val_set, batch_size=args.test_batch_size, shuffle=False)
+        train_loader = DataLoader(train_set, batch_size=args.batchsize, shuffle=False)
+        val_loader = DataLoader(val_set, batch_size=args.batchsize, shuffle=False)
 
         # train
         val_micro, val_auc, val_macro = train_and_evaluate(model, train_loader, val_loader,
@@ -131,15 +149,22 @@ def main_training_loop(path):
     logging.info(result_str)
 
     current_metric = np.mean(aucs)
-
-    if args.enable_nni:
+    if args.use_nni:
         nni.report_final_result(current_metric)
     
-    if nni.get_best_result() is None or current_metric > nni.get_best_result():
+    if best is None or current_metric > best:
+        best = current_metric
         torch.save(model.state_dict(), os.path.join(args.path, 'best_model.pth')) 
         with open(os.path.join(args.path, "best_hyperparams.json"), "w") as hp_file:
             json.dump(args.nni_params, hp_file)
 
+if __name__ == "__main__":
+    logger.info('----------RUNNING TRAIN BRAIN GB SCRIPT-----------')
+    assert(len(sys.argv) == 2)
+    path = sys.argv[1]
+    assert(os.path.exists(path))
+    logger.info(f"DATA PATH: {path}")
+    main_training_loop(path)
 
 
     

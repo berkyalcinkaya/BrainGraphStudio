@@ -20,11 +20,14 @@ class ParamArgs():
         self.x_test = np.load(os.path.join(path, "x_test.npy"))
         self.y_test = np.load(os.path.join(path, "y_test.npy"))
 
-        self.file_args = json.load(os.path.join(path,"data.json"))
+        with open(os.path.join(path,"data.json"), "r") as file:
+            self.file_args = json.load(file)
         for key, value in self.file_args.items():
             setattr(self, key, value)
         
-        self.model_args = json.load(os.path.join(path, "model.json"))
+        with open(os.path.join(path, "model.json"), "r") as file:
+            self.model_args = json.load(file)
+
         self.use_brain_gnn = self.model_args["use_brain_gnn"]
         self.data_train_val, self.data_test = self.data_parser()
         self.update_data_features()
@@ -32,8 +35,9 @@ class ParamArgs():
 
         if self.use_brain_gnn:
             self.check_brain_gnn_args()
-    
-        self.param_args = json.load(os.path.join(path, "params.json"))
+
+        with open(os.path.join(path, "params.json"), "r") as file:
+            self.param_args = json.load(file)
         self.process_param_args()
 
         self.nni_params = None
@@ -55,26 +59,28 @@ class ParamArgs():
         if not self.use_brain_gnn:
             data_list = (apply_transforms(data_list, self.model_args["node_features"]))
             data_list_test = (apply_transforms(data_list_test, self.model_args["node_features"]))
-        return np.array(data_list), np.array(data_list_test)
+        return data_list, data_list_test
     
     def update_data_features(self):
-        self.num_features = self.data[0].x.shape[1]
-        self.num_nodes = self.data[0].num_nodes
+        print(self.data_train_val)
+        self.num_features = self.data_train_val[0].x.shape[1]
+        self.num_nodes = self.data_train_val[0].num_nodes
 
     def get_model_name(self):
         self.gcn_mp_type, self.gat_mp_type = None, None
+        print(self.model_args)
         if self.use_brain_gnn:
             self.model_name = "brainGNN"
-        if len(self.model_args["message_passing"]) == 0:
+        if self.model_args["message_passing"] != "":
             self.model_name = "gcn"
-            self.gcn_mp_type = self.model_args["message_passing"][0]
-        elif len(self.model_args["message_passing with attention"]) > 0:
+            self.gcn_mp_type = self.model_args["message_passing"]
+        elif self.model_args["message_passing_w_attn"] != "":
             self.model_name = "gat"
-            self.gat_mp_type = self.model_args["message_passing with attention"][0]
+            self.gat_mp_type = self.model_args["message_passing_w_attn"]
         
         if not self.use_brain_gnn:
-            self.pooling = self.model_args["pooling"][0]
-    
+            self.pooling = self.model_args["pooling"]
+        print(self.model_name)
     def process_param_args(self):
         self.use_nni = self.param_args["nni"]["optimization_algorithm"] != "None"
         self.param_args = merge_nested_dicts(self.param_args)

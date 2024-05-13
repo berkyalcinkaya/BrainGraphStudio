@@ -5,7 +5,6 @@ from torch_geometric.nn import GCNConv, TopKPooling, global_mean_pool,  GATConv,
 from torch_geometric.nn import global_mean_pool as gap, global_max_pool as gmp
 import torch.nn.functional as F
 
-
 class TwoLayerSimpleGCN(torch.nn.Module):
     def __init__(self, num_features, embedding_size = 64):
         # Init parent
@@ -42,7 +41,6 @@ class TwoLayerSimpleGCN(torch.nn.Module):
         out = self.sigmoid(self.out(hidden))
 
         return out, hidden
-
 
 class TwoLayerGCNWithPooling(torch.nn.Module):
     def __init__(self, indim, ratio, features):
