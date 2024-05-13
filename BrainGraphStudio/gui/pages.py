@@ -19,6 +19,7 @@ class FilePage(QWizardPage):
         super().__init__()
         self.setTitle("Load and Configure Training Data")
         self.setLayout(QGridLayout())
+        self.setMinimumHeight(700)
 
         self.projectNameLabel = QLabel("Project Name")
         self.projectName = QLineEdit()
@@ -84,7 +85,7 @@ class FilePage(QWizardPage):
 
         self.figure = Figure()
         self.canvas = FigureCanvas(self.figure)
-        self.layout().addWidget(self.canvas, 9, 0, 6, 4)
+        self.layout().addWidget(self.canvas, 9, 0, 4, 4)
         self.canvas.setVisible(False)
         sizePolicy = QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         #sizePolicy.setRetainSizeWhenHidden(True)
@@ -191,6 +192,7 @@ class FilePage(QWizardPage):
             ax.set_title('Label Distribution')
             self.figure.tight_layout()
             self.canvas.draw()
+            #self.figure.set_size_inches(2,3)
         else:
             self.canvas.setVisible(False)
 
@@ -310,7 +312,7 @@ class FilePage(QWizardPage):
             project_dir = self.data_dir
         
         data_dict = {
-            "project_name": self.projectNameLabel.text(),
+            "project_name": self.projectName.text(),
             "project_dir": project_dir,
             "num_classes": self.num_classes,
             "num_features": self.num_features,
@@ -318,7 +320,7 @@ class FilePage(QWizardPage):
             "labels": self.labels,
             "shape": self.shape,
             "type": str(self.dtype),
-            "is_binary": self.is_binary,
+            "is_binary": bool(self.is_binary),
             # "augmentation": self.augmentedCheckbox.isChecked(),
             # "aug_factor": self.augmentationFactor.value(),
             "thresholdd": self.thresholdLevel.value(),
@@ -443,7 +445,7 @@ class ModelPage(QWizardPage):
 
     def get_data(self):
         data = {
-            "use_brain_gnn": self.use_brain_gnn.isChecked(),
+            "use_brain_gnn": bool(self.use_brain_gnn.isChecked()),
             "node_fatures": [radio.text() for radio in self.node_features_radios if radio.isChecked()],
             "message-passing": [],
             "message-passing with attention": [],

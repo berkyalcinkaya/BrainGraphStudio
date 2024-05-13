@@ -1,9 +1,11 @@
+from enum import unique
 import sys
 from PyQt5.QtWidgets import QApplication, QWizard
 from PyQt5.QtGui import QPixmap
 from BrainGraphStudio.gui.pages import FilePage, ModelPage, HyperParamDialog
 import os
 import logging
+import json
 from BrainGraphStudio.utils import write_dict_to_json
 import numpy as np
 from BrainGraphStudio.nni import configure_nni
@@ -18,7 +20,7 @@ class CustomWizard(QWizard):
         self.setWindowTitle("Build your Graph Neural Network")
 
         #logo = QPixmap("logo.png").scaled(100,70)
-        banner = QPixmap("brain_class/gui/ims/banner.png").scaled(125,550)
+        banner = QPixmap("BrainGraphStudio/gui/ims/banner.png").scaled(125,550)
         #self.setPixmap(QWizard.LogoPixmap, logo)
         self.setPixmap(QWizard.WatermarkPixmap, banner)
         self.setWizardStyle(QWizard.ClassicStyle)
@@ -50,7 +52,7 @@ def write_file_data_to_disk(path, file_data, test_split, seed):
 
 
     x_train_path = os.path.join(path,"x_train.npy")
-    y_train_path = os.path.join(path,"y_trainn.npy")
+    y_train_path = os.path.join(path,"y_train.npy")
     x_test_path = os.path.join(path,"x_test.npy")
     y_test_path = os.path.join(path,"y_train.npy")
     
@@ -68,20 +70,26 @@ def write_file_data_to_disk(path, file_data, test_split, seed):
     del file_data["labels"]
 
     file_data_path = os.path.join(path, "data.json")
-
     write_dict_to_json(file_data, file_data_path)
     logging.info(f"file data saved to {file_data_path}")
 
 def make_project_dir(project_dir, project_name):
-    new_path = os.path.join(project_dir, project_name)
-    if os.path.exists(new_path):
-        old_path = new_path
-        new_path = new_path+"-2"
-        logging.warning(f"{old_path} already exists")
+    potential_path = os.path.join(project_dir, project_name)
+    counter = 1
+
+    if os.path.exists(potential_path):
+        unique_path = potential_path
+        while os.path.exists(unique_path):
+            # Append a numeric suffix to create a unique directory name
+            unique_path = f"{potential_path}_{counter}"
+            counter += 1
+        logging.info(f"{potential_path} exists. Utilizing {unique_path} instead")
+        os.mkdir(unique_path)
+        return unique_path
     else:
-        os.mkdir(new_path) 
-    logging.info(f"{new_path} initialized as project directory")
-    return new_path
+        os.mkdir(potential_path) 
+        logging.info(f"{potential_path} initialized as project directory")
+        return potential_path
 
 def main():
     app = QApplication(sys.argv)
@@ -92,8 +100,11 @@ def main():
         model_data = wizard.get_model_data()
         param_data = wizard.get_param_data()
 
-        if param_data["random_seed"] == -1:
-            param_data["random_seed"] = None
+        seed = param_data["data"]["random_seed"] 
+        if seed == 0:
+            seed = param_data["data"]["random_seed"] = None
+            logging.info("No Random Seed Specified")
+
  
         python_path = file_data["python_path"]
         if not os.path.exists(python_path):
@@ -101,13 +112,22 @@ def main():
         
         project_path = make_project_dir(file_data["project_dir"], file_data["project_name"])
 
-        write_file_data_to_disk(project_path, file_data, param_data["test_split"])
+        write_file_data_to_disk(project_path, file_data, param_data["data"]["test_split"], seed)
         write_dict_to_json(model_data, os.path.join(project_path, "model.json"))
-        write_dict_to_json(param_data)
 
         use_nni = param_data["nni"]["optimization_algorithm"] != "None"
         if use_nni:
+            param_data["nni"]["search_space"] = json.loads(param_data["nni"]["search_space"])
+        write_dict_to_json(param_data, os.path.join(project_path, "params.json"))
+
+        if use_nni:
+            logging.info("Utilizing An NNI Experiment to Train Models with Hyperparameter Optimization")
             experiment = configure_nni(param_data["nni"], project_path, python_path)
+            experiment.run(8080)
+            # some sort of model testing here
+        else:
+            logging.info("No Hyperparameter Optimization In Use")
+            #sys.run()
 
         
     sys.exit() 

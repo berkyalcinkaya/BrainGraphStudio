@@ -6,7 +6,7 @@ import nni
 import torch
 import torch.nn.functional as F
 from sklearn import metrics
-from sklearn.model_selection import StratifiedKFold, train_test_split
+from sklearn.model_selection import StratifiedKFold
 from typing import Optional
 from torch.utils.data import DataLoader
 import logging

@@ -3,35 +3,63 @@ import torch.nn.functional as F
 import numpy as np
 import time
 import logging
+import nni
+import os
+from typing import Optional
+from sklearn import metrics
+from torch.utils.data import DataLoader
+from torch.optim import lr_scheduler
+from sklearn.model_selection import StratifiedKFold
 from tensorboardX import SummaryWriter
+from BrainGraphStudio.train.input_utils import ParamArgs
+from BrainGraphStudio.train.train_utils import seed_everything, get_device
+from BrainGraphStudio.models.model import build_model
+from BrainGraphStudio.models.brainGNN.loss import topk_loss, consist_loss
+import json
 logger = logging.getLogger(__name__)
 
-EPS = 1e-10
 
-def train_and_evaluate(model, train_loader, test_loader, optimiizer, device, args):
-    model.train()
+def train_and_evaluate(model, train_loader, test_loader, optimizer, scheduler, device, args, writer):
     model.train()
     accs, aucs, macros = [], [], []
     epoch_num = args.epochs
 
     for epoch in range(epoch_num):
         since  = time.time()
-        tr_loss, s1_arr, s2_arr, w1, w2 = train(epoch)
+        tr_loss, s1_arr, s2_arr, w1, w2 = train(epoch, scheduler, optimizer, train_loader, model, device, args, writer) # collect accuracies
+        val_loss = test_loss(test_loader,epoch)
         tr_acc = test_acc(train_loader)
         val_acc = test_acc(test_loader)
-        val_loss = test_loss(test_loader,epoch)
+        
+        train_micro, train_auc, train_macro = evaluate(model, device, train_loader)
         time_elapsed = time.time() - since
+
         logger.info('{:.0f}m {:.0f}s'.format(time_elapsed // 60, time_elapsed % 60))
-        logger.info('Epoch: {:03d}, Train Loss: {:.7f}, '
-            'Train Acc: {:.7f}, Test Loss: {:.7f}, Test Acc: {:.7f}'.format(epoch, tr_loss,
-                                                        tr_acc, val_loss, val_acc))
+        logger.info(f'(Train) | Epoch={epoch:03d}, loss={tr_loss:.4f}, '
+                     f'train_micro={(train_micro * 100):.2f}, train_macro={(train_macro * 100):.2f}, '
+                     f'train_auc={(train_auc * 100):.2f}')
+        logger.info('Train Acc: {:.7f}, Test Loss: {:.7f}, Test Acc: {:.7f}'.format(tr_acc, val_loss, val_acc))
+
+        if (epoch + 1) % args.test_interval == 0:
+            test_micro, test_auc, test_macro = evaluate(model, device, test_loader)
+            accs.append(test_micro)
+            aucs.append(test_auc)
+            macros.append(test_macro)
+            text = f'(Train Epoch {epoch}), test_micro={(test_micro * 100):.2f}, ' \
+                   f'test_macro={(test_macro * 100):.2f}, test_auc={(test_auc * 100):.2f}\n'
+            logger.info(text)
+        
+        if args.enable_nni:
+            nni.report_intermediate_result(train_auc)
+                                                        
 
         writer.add_scalars('Acc',{'train_acc':tr_acc,'val_acc':val_acc},  epoch)
         writer.add_scalars('Loss', {'train_loss': tr_loss, 'val_loss': val_loss},  epoch)
         writer.add_histogram('Hist/hist_s1', s1_arr, epoch)
         writer.add_histogram('Hist/hist_s2', s2_arr, epoch)
-
-
+    
+    accs, aucs, macros = np.sort(np.array(accs)), np.sort(np.array(aucs)), np.sort(np.array(macros))
+    return accs.mean(), aucs.mean(), macros.mean()
 
 
 def test_acc(loader, model, device):
@@ -45,7 +73,36 @@ def test_acc(loader, model, device):
 
     return correct / len(loader.dataset)
 
-def test_loss(loader,epoch, model, device, args):
+@torch.no_grad()
+def evaluate(model, device, loader, test_loader: Optional[DataLoader] = None) -> tuple[float, float]:
+    model.eval()
+    preds, trues, preds_prob = [], [], []
+
+    correct, auc = 0, 0
+    for data in loader:
+        data = data.to(device)
+        c = model(data)
+
+        pred = c.max(dim=1)[1]
+        preds += pred.detach().cpu().tolist()
+        preds_prob += torch.exp(c)[:, 1].detach().cpu().tolist()
+        trues += data.y.detach().cpu().tolist()
+
+    train_auc = metrics.roc_auc_score(trues, preds_prob)
+
+    if np.isnan(auc):
+        train_auc = 0.5
+    train_micro = metrics.f1_score(trues, preds, average='micro')
+    train_macro = metrics.f1_score(trues, preds, average='macro', labels=[0, 1])
+
+    if test_loader is not None:
+        test_micro, test_auc, test_macro = evaluate(model, device, test_loader)
+        return train_micro, train_auc, train_macro, test_micro, test_auc, test_macro
+    else:
+        return train_micro, train_auc, train_macro
+
+
+def test_loss(loader,model, device, args):
     print('testing...........')
     model.eval()
     loss_all = 0
@@ -59,36 +116,16 @@ def test_loss(loader,epoch, model, device, args):
         loss_tpk1 = topk_loss(s1,args.pooling_ratio)
         loss_tpk2 = topk_loss(s2,args.pooling_ratio)
         loss_consist = 0
-        for c in range(nclass):
+        for c in range(args.num_classes):
             loss_consist += consist_loss(s1[data.y == c])
-        loss = lamb0*loss_c + lamb1 * loss_p1 + lamb2 * loss_p2 \
-                   + lamb3 * loss_tpk1 + lamb4 *loss_tpk2 + lamb5* loss_consist
+        loss = args.lamb0*loss_c + args.lamb1 * loss_p1 + args.lamb2 * loss_p2 \
+                   + args.lamb3 * loss_tpk1 + args.lamb4 *loss_tpk2 + args.lamb5* loss_consist
 
         loss_all += loss.item() * data.num_graphs
     return loss_all / len(loader.dataset)
 
-def topk_loss(s,ratio):
-    if ratio > 0.5:
-        ratio = 1-ratio
-    s = s.sort(dim=1).values
-    res =  -torch.log(s[:,-int(s.size(1)*ratio):]+EPS).mean() -torch.log(1-s[:,:int(s.size(1)*ratio)]+EPS).mean()
-    return res
 
-
-def consist_loss(s, device):
-    if len(s) == 0:
-        return 0
-    s = torch.sigmoid(s)
-    W = torch.ones(s.shape[0],s.shape[0])
-    D = torch.eye(s.shape[0])*torch.sum(W,dim=1)
-    L = D-W
-    L = L.to(device)
-    res = torch.trace(torch.transpose(s,0,1) @ L @ s)/(s.shape[0]*s.shape[0])
-    return res
-
-
-def train(epoch, scheduler, optimizer, train_loader, model, device, args):
-    print('train...........')
+def train(epoch, scheduler, optimizer, train_loader, model, device, args, writer):
     scheduler.step()
 
     for param_group in optimizer.param_groups:
@@ -115,14 +152,16 @@ def train(epoch, scheduler, optimizer, train_loader, model, device, args):
         loss_consist = 0
         for c in range(args.num_classes):
             loss_consist += consist_loss(s1[data.y == c])
-        loss = lamb0*loss_c + lamb1 * loss_p1 + lamb2 * loss_p2 \
-                   + lamb3 * loss_tpk1 + lamb4 *loss_tpk2 + lamb5* loss_consist
+        loss = args.lamb0*loss_c + args.lamb1 * loss_p1 + args.lamb2 * loss_p2 \
+                   + args.lamb3 * loss_tpk1 + args.lamb4 *loss_tpk2 + args.lamb5* loss_consist
+        
         writer.add_scalar('train/classification_loss', loss_c, epoch*len(train_loader)+step)
         writer.add_scalar('train/unit_loss1', loss_p1, epoch*len(train_loader)+step)
         writer.add_scalar('train/unit_loss2', loss_p2, epoch*len(train_loader)+step)
         writer.add_scalar('train/TopK_loss1', loss_tpk1, epoch*len(train_loader)+step)
         writer.add_scalar('train/TopK_loss2', loss_tpk2, epoch*len(train_loader)+step)
         writer.add_scalar('train/GCL_loss', loss_consist, epoch*len(train_loader)+step)
+        
         step = step + 1
 
         loss.backward()
@@ -132,3 +171,56 @@ def train(epoch, scheduler, optimizer, train_loader, model, device, args):
         s1_arr = np.hstack(s1_list)
         s2_arr = np.hstack(s2_list)
     return loss_all / len(train_loader.dataset), s1_arr, s2_arr ,w1,w2
+
+
+def main_training_loop(path):
+    args = ParamArgs(path)
+    seed_everything(args.seed)
+    device = get_device()
+
+    if args.use_nni:
+        args.add_nni_args(nni.get_next_parameter())
+    
+    dataset, y = args.data_train_val, args.y_train_val
+    accs, aucs, macros = [], [], []
+    skf = StratifiedKFold(n_splits=args.k_fold_splits, shuffle=True)
+    for fold_idx, (train_index, val_index) in enumerate(skf.split(dataset, y)):
+
+        log_dir = os.path.join(os.environ["NNI_OUTPUT_DIR"], 'tensorboard', f'fold_{fold_idx}')
+        writer = SummaryWriter(log_dir=log_dir)
+
+        model = build_model(args, device, args.model_name, args.num_features, args.num_nodes,
+                            args.n_MLP_layers, args.hidden_dim, args.num_classes)
+        
+        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+        scheduler = lr_scheduler.StepLR(optimizer, step_size=args.lr_scheduler_stepsize, gamma=args.gamma)
+        
+        
+        train_set, val_set = dataset[train_index], dataset[val_index]
+        train_loader = DataLoader(train_set, batch_size=args.train_batch_size, shuffle=False)
+        val_loader = DataLoader(val_set, batch_size=args.test_batch_size, shuffle=False)
+
+        val_micro, val_auc, val_macro = train_and_evaluate(model, train_loader, val_loader,
+                                                                optimizer, scheduler, device, args, writer)
+        
+        accs.append(val_micro)
+        aucs.append(val_auc)
+        macros.append(val_macro)
+        writer.close()
+
+    result_str = f'(K Fold Final Result)| avg_acc={(np.mean(accs) * 100):.2f} +- {(np.std(accs) * 100): .2f}, ' \
+                 f'avg_auc={(np.mean(aucs) * 100):.2f} +- {np.std(aucs) * 100:.2f}, ' \
+                 f'avg_macro={(np.mean(macros) * 100):.2f} +- {np.std(macros) * 100:.2f}\n'
+    logging.info(result_str)
+
+    current_metric = np.mean(aucs)
+
+    if args.enable_nni:
+        nni.report_final_result(current_metric)
+    
+    if nni.get_best_result() is None or current_metric > nni.get_best_result():
+        torch.save(model.state_dict(), os.path.join(args.path, 'best_model.pth')) 
+        with open(os.path.join(args.path, "best_hyperparams.json"), "w") as hp_file:
+            json.dump(args.nni_params, hp_file)
+
+

@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 class ParamArgs():
     def __init__(self, path):
+        
         self.path = path
         self.x_train_val = np.load(os.path.join(path, "x_train.npy"))
         self.y_train_val = np.load(os.path.join(path, "y_train.npy"))
