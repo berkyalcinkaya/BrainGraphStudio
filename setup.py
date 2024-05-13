@@ -42,5 +42,3 @@ setup(
           'yeastvision = yeastvision.__main__:main']
        }
 )
-
-)
