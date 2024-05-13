@@ -22,19 +22,6 @@ class MaskableList(list):
                 # Treat as a list of indices
                 return MaskableList([self[i] for i in index])
 
-# Example usage
-data = [10, 20, 30, 40, 50]
-ml = MaskableList(data)
-
-# Using a boolean mask
-mask = [True, False, True, False, True]
-print(ml[mask])  # Output: MaskableList([10, 30, 50])
-
-# Using a list of indices
-indices = [0, 2, 4]
-print(ml[indices])  # Output: MaskableList([10, 30, 50])
-
-
 def write_dict_to_json(data, file_path):
     with open(file_path, 'w') as json_file:
         json.dump(data, json_file, indent=4)

@@ -7,10 +7,6 @@ import nni
 from BrainGraphStudio.data import apply_transforms, convert_raw_to_datas, density_threshold
 logger = logging.getLogger(__name__)
 
-
-
-
-
 class ParamArgs():
     def __init__(self, path):
         
@@ -44,7 +40,7 @@ class ParamArgs():
     
     def check_brain_gnn_args(self):
         if self.threshold != 10:
-            print(f"BrainGNN recommends threshold value of 10. Proceeding with top {self.threshold} of edges")
+            logger.info(f"BrainGNN recommends threshold value of 10. Proceeding with top {self.threshold} of edges")
         
     def data_parser(self):
         thresh = self.threshold
@@ -62,16 +58,14 @@ class ParamArgs():
         return data_list, data_list_test
     
     def update_data_features(self):
-        print(self.data_train_val)
         self.num_features = self.data_train_val[0].x.shape[1]
         self.num_nodes = self.data_train_val[0].num_nodes
 
     def get_model_name(self):
         self.gcn_mp_type, self.gat_mp_type = None, None
-        print(self.model_args)
         if self.use_brain_gnn:
             self.model_name = "brainGNN"
-        if self.model_args["message_passing"] != "":
+        elif self.model_args["message_passing"] != "":
             self.model_name = "gcn"
             self.gcn_mp_type = self.model_args["message_passing"]
         elif self.model_args["message_passing_w_attn"] != "":
@@ -80,7 +74,6 @@ class ParamArgs():
         
         if not self.use_brain_gnn:
             self.pooling = self.model_args["pooling"]
-        print(self.model_name)
     def process_param_args(self):
         self.use_nni = self.param_args["nni"]["optimization_algorithm"] != "None"
         self.param_args = merge_nested_dicts(self.param_args)

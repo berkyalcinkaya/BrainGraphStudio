@@ -5,12 +5,13 @@
     "version": "0.2.0",
     "configurations": [
 
+
         {
             "name": "Python Debugger: Module",
             "type": "debugpy",
             "request": "launch",
-            "module": "BrainGraphStudio.train.train_brain_gb",
-            "args": ["/Users/berk/code/BrainGraphStudio/test_13"],
+            "module": "BrainGraphStudio.train.train_brain_gnn",
+            "args": ["/Users/berk/code/BrainGraphStudio/test_8"],
             ""
         }
     ]

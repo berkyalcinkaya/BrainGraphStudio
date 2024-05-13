@@ -468,6 +468,7 @@ class HyperParamDialog(QWizardPage):
 
         self.setTitle("Select Hyperparameters")
         self.setSubTitle("Choose hyperparameters, or define parameter search spaces")
+        self.setFixedHeight(800)
 
         self.caption = '''Define hyperparameter searchspace in json using <a href="https://nni.readthedocs.io/en/stable/hpo/search_space.html">NNI specs</a>:
         <br>A parameter is optimizable if it has an entry in the json. Delete the parameter's <br> entry to remove it as a search space dimension. 

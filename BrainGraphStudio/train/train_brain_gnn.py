@@ -7,19 +7,19 @@ import nni
 import os
 from typing import Optional
 from sklearn import metrics
-from torch.utils.data import DataLoader
+from torch_geometric.loader import DataLoader
 from torch.optim import lr_scheduler
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedKFold, train_test_split
 from tensorboardX import SummaryWriter
 from BrainGraphStudio.train.input_utils import ParamArgs
 from BrainGraphStudio.train.train_utils import seed_everything, get_device
 from BrainGraphStudio.models.model import build_model
 from BrainGraphStudio.models.brainGNN.loss import topk_loss, consist_loss
 import json
+import sys
 
 from BrainGraphStudio.utils import MaskableList
 logger = logging.getLogger(__name__)
-
 
 def train_and_evaluate(model, train_loader, test_loader, optimizer, scheduler, device, args, writer):
     model.train()
@@ -29,9 +29,9 @@ def train_and_evaluate(model, train_loader, test_loader, optimizer, scheduler, d
     for epoch in range(epoch_num):
         since  = time.time()
         tr_loss, s1_arr, s2_arr, w1, w2 = train(epoch, scheduler, optimizer, train_loader, model, device, args, writer) # collect accuracies
-        val_loss = test_loss(test_loader,epoch)
-        tr_acc = test_acc(train_loader)
-        val_acc = test_acc(test_loader)
+        val_loss = test_loss(test_loader, model, device, args)
+        tr_acc = test_acc(train_loader, model, device)
+        val_acc = test_acc(test_loader, model, device)
         
         train_micro, train_auc, train_macro = evaluate(model, device, train_loader)
         time_elapsed = time.time() - since
@@ -51,7 +51,7 @@ def train_and_evaluate(model, train_loader, test_loader, optimizer, scheduler, d
                    f'test_macro={(test_macro * 100):.2f}, test_auc={(test_auc * 100):.2f}\n'
             logger.info(text)
         
-        if args.enable_nni:
+        if args.use_nni:
             nni.report_intermediate_result(train_auc)
                                                         
 
@@ -83,14 +83,18 @@ def evaluate(model, device, loader, test_loader: Optional[DataLoader] = None) ->
     correct, auc = 0, 0
     for data in loader:
         data = data.to(device)
-        c = model(data)
+        c, w1, w2, s1, s2 = model(data.x, data.edge_index, data.batch, data.edge_attr, data.pos)
 
         pred = c.max(dim=1)[1]
         preds += pred.detach().cpu().tolist()
         preds_prob += torch.exp(c)[:, 1].detach().cpu().tolist()
         trues += data.y.detach().cpu().tolist()
 
-    train_auc = metrics.roc_auc_score(trues, preds_prob)
+    try:
+        train_auc = metrics.roc_auc_score(trues, preds_prob)
+    except ValueError:
+        logger.warning("Only one class present in y_true. ROC AUC score is not defined in that case.")
+        train_auc = 0
 
     if np.isnan(auc):
         train_auc = 0.5
@@ -105,7 +109,7 @@ def evaluate(model, device, loader, test_loader: Optional[DataLoader] = None) ->
 
 
 def test_loss(loader,model, device, args):
-    print('testing...........')
+    logger.info('testing...........')
     model.eval()
     loss_all = 0
     for data in loader:
@@ -119,7 +123,7 @@ def test_loss(loader,model, device, args):
         loss_tpk2 = topk_loss(s2,args.pooling_ratio)
         loss_consist = 0
         for c in range(args.num_classes):
-            loss_consist += consist_loss(s1[data.y == c])
+            loss_consist += consist_loss(s1[data.y == c], device)
         loss = args.lamb0*loss_c + args.lamb1 * loss_p1 + args.lamb2 * loss_p2 \
                    + args.lamb3 * loss_tpk1 + args.lamb4 *loss_tpk2 + args.lamb5* loss_consist
 
@@ -130,8 +134,8 @@ def test_loss(loader,model, device, args):
 def train(epoch, scheduler, optimizer, train_loader, model, device, args, writer):
     scheduler.step()
 
-    for param_group in optimizer.param_groups:
-        print("LR", param_group['lr'])
+    # for param_group in optimizer.param_groups:
+    #     print("LR", param_group['lr'])
     model.train()
     s1_list = []
     s2_list = []
@@ -153,7 +157,7 @@ def train(epoch, scheduler, optimizer, train_loader, model, device, args, writer
         loss_tpk2 = topk_loss(s2,args.pooling_ratio)
         loss_consist = 0
         for c in range(args.num_classes):
-            loss_consist += consist_loss(s1[data.y == c])
+            loss_consist += consist_loss(s1[data.y == c], device)
         loss = args.lamb0*loss_c + args.lamb1 * loss_p1 + args.lamb2 * loss_p2 \
                    + args.lamb3 * loss_tpk1 + args.lamb4 *loss_tpk2 + args.lamb5* loss_consist
         
@@ -176,7 +180,9 @@ def train(epoch, scheduler, optimizer, train_loader, model, device, args, writer
 
 
 def main_training_loop(path):
+    best = None
     args = ParamArgs(path)
+    logger.info("LOADED PARAM ARGS")
     if args.random_seed:
         seed_everything(args.random_seed)
         logger.info(f"Seeding All Random Processes with seed: {args.random_seed}")
@@ -184,25 +190,36 @@ def main_training_loop(path):
 
     if args.use_nni:
         args.add_nni_args(nni.get_next_parameter())
-    
+
     dataset, y = MaskableList(args.data_train_val), MaskableList(args.y_train_val)
     accs, aucs, macros = [], [], []
-    skf = StratifiedKFold(n_splits=args.k_fold_splits, shuffle=True)
-    for fold_idx, (train_index, val_index) in enumerate(skf.split(dataset, y)):
 
-        log_dir = os.path.join(os.environ["NNI_OUTPUT_DIR"], 'tensorboard', f'fold_{fold_idx}')
+    if args.k_fold_splits < 2:
+        logger.info("k fold splits < 2. No StratifiedKFolds in use")
+        train_index, val_index = train_test_split(range(len(dataset)), test_size=0.2, stratify=y)
+        # Proceed with the training using train_index and val_index as if they were from a single split
+        indices = [(train_index, val_index)]
+    else:
+        skf = StratifiedKFold(n_splits=args.k_fold_splits, shuffle=True)
+        indices = skf.split(dataset, y)
+
+    for fold_idx, (train_index, val_index) in enumerate(indices):
+        if args.use_nni:
+            log_dir = os.path.join(os.environ["NNI_OUTPUT_DIR"], 'tensorboard', f'fold_{fold_idx}')
+        else:
+            log_dir = os.path.join(path, f".log/{fold_idx}")
         writer = SummaryWriter(log_dir=log_dir)
 
         model = build_model(args, device, args.model_name, args.num_features, args.num_nodes,
-                            args.n_MLP_layers, args.hidden_dim, args.num_classes)
+                            args.n_GNN_layers, n_classes=args.num_classes)
         
         optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
         scheduler = lr_scheduler.StepLR(optimizer, step_size=args.lr_scheduler_stepsize, gamma=args.gamma)
         
         
         train_set, val_set = dataset[train_index], dataset[val_index]
-        train_loader = DataLoader(train_set, batch_size=args.train_batch_size, shuffle=False)
-        val_loader = DataLoader(val_set, batch_size=args.test_batch_size, shuffle=False)
+        train_loader = DataLoader(train_set, batch_size=args.batchsize, shuffle=False)
+        val_loader = DataLoader(val_set, batch_size=args.batchsize, shuffle=False)
 
         val_micro, val_auc, val_macro = train_and_evaluate(model, train_loader, val_loader,
                                                                 optimizer, scheduler, device, args, writer)
@@ -219,12 +236,20 @@ def main_training_loop(path):
 
     current_metric = np.mean(aucs)
 
-    if args.enable_nni:
+    if args.use_nni:
         nni.report_final_result(current_metric)
     
-    if nni.get_best_result() is None or current_metric > nni.get_best_result():
+    if best is None or current_metric > best:
+        best = current_metric
         torch.save(model.state_dict(), os.path.join(args.path, 'best_model.pth')) 
         with open(os.path.join(args.path, "best_hyperparams.json"), "w") as hp_file:
             json.dump(args.nni_params, hp_file)
 
 
+if __name__ == "__main__":
+    logger.info('----------RUNNING TRAIN BRAINGNN SCRIPT-----------')
+    assert(len(sys.argv) == 2)
+    path = sys.argv[1]
+    assert(os.path.exists(path))
+    logger.info(f"DATA PATH: {path}")
+    main_training_loop(path)

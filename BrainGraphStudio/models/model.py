@@ -5,6 +5,7 @@ from .params import Param
 
 
 def build_model(args, device, model_name, num_features, num_nodes, n_MLP_layers, hidden_dim=None, n_classes = 2):
+    print(model_name)
     if model_name == 'gcn':
         model = BrainNN(args,
                       GCN(num_features, args, num_nodes, n_classes),
@@ -31,13 +32,16 @@ class BrainGNN():
                 Param("k_fold_splits", 0, int),
               Param("weight_decay", 5e-3, float, optimizable=True), 
               Param("gamma", 0.5, float, optimizable = True), 
-              Param("lr_sceduler_stepsize", 20, int, optimizable = True, description="decay the learning rate by gamma every <lr_sceduler_stepsize> epochs"),
-                Param("lambda1", 0.1, float, optimizable=True), 
-                Param("lambda2", 0.1, float, optimizable=True),
+              Param("lr_scheduler_stepsize", 20, int, optimizable = True, description="decay the learning rate by gamma every <lr_sceduler_stepsize> epochs"),
+                Param("lamb0", 1, float, optimizable=True), 
+                Param("lamb1", 0, float, optimizable=True),
+                Param("lamb2", 0, float, optimizable=True), 
+                Param("lamb3", 0.1, float, optimizable=True),
+                Param("lamb4", 0.1, float, optimizable=True), 
+                Param("lamb5", 0.1, float, optimizable=True),
                 Param("communities", 3, int, optimizable=True, default_search_space=[3,7,10]),
                 Param("test_interval", 5, int)
                 ]
-    
     
     architecture_params = [Param("n_GNN_layers", 2, int, optimizable=True), 
                            Param("pooling_ratio", 0.5, float, optimizable=True)]
